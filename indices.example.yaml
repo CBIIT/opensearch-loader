@@ -1,0 +1,31 @@
+indices:
+  - index_name: "users"
+    id_field: "user_id"  # Field from query results to use as OpenSearch document _id
+    initial_query:
+      query: "MATCH (u:User) RETURN u.id as user_id, u.name as name, u.email as email, u.created_at as created_at"
+      variables: {}  # Optional query parameters/variables
+      page_size: 1000  # Optional pagination size
+    update_queries:
+      - name: "update_timestamps"
+        query: "MATCH (u:User) WHERE u.updated_at > $last_update RETURN u.id as user_id, u.updated_at as updated_at"
+        variables:
+          last_update: "2024-01-01T00:00:00Z"  # Query variables/parameters
+        page_size: 500
+      - name: "update_status"
+        query: "MATCH (u:User) RETURN u.id as user_id, u.status as status, u.last_active as last_active"
+        variables: {}
+        page_size: 1000
+
+  - index_name: "products"
+    id_field: "product_id"
+    initial_query:
+      query: "MATCH (p:Product) RETURN p.id as product_id, p.name as name, p.price as price, p.category as category"
+      variables: {}
+      page_size: 1000
+    update_queries:
+      - name: "update_prices"
+        query: "MATCH (p:Product) WHERE p.price_updated > $since RETURN p.id as product_id, p.price as price, p.price_updated as price_updated"
+        variables:
+          since: "2024-01-01T00:00:00Z"
+        page_size: 500
+
