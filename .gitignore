@@ -127,4 +127,5 @@ config.yaml
 indices.yaml
 *.pyc
 .DS_Store
+.vscode/
 
