@@ -1,0 +1,17 @@
+memgraph:
+  host: localhost
+  port: 7687
+  username: austin
+  password: gc-password
+
+opensearch:
+  host: "http://localhost:9200"
+  use_ssl: false
+  verify_certs: false
+#  username: null
+#  password: null
+
+index_spec_file: "indices.gc.yaml"  # Path to index specification file
+clear_existing_indices: true  # Clear all existing indices before starting (universal)
+allow_index_creation: true  # Allow creation of indices if missing (universal)
+

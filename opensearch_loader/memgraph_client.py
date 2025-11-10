@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterator
 from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
@@ -120,23 +120,23 @@ class MemgraphClient:
                 # Convert record to dictionary
                 results.append(dict(record))
         
-        logger.info(f"Executed query, returned {len(results)} results")
+        logger.debug(f"Executed query, returned {len(results)} results")
         return results
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
-                               page_size: int = 1000) -> List[Dict[str, Any]]:
-        """Execute a query with pagination.
+                               page_size: int = 10000) -> Iterator[List[Dict[str, Any]]]:
+        """Execute a query with pagination, yielding pages one at a time.
         
         Args:
             query: Cypher query string (must contain $skip and $limit parameters)
             parameters: Optional query parameters (will be merged with pagination params)
-            page_size: Number of results per page
+            page_size: Number of results per page (default: 10000)
             
-        Returns:
-            List of all result dictionaries
+        Yields:
+            List of result dictionaries for each page
         """
-        all_results = []
         offset = 0
+        total_results = 0
         
         while True:
             # Merge pagination parameters with existing parameters
@@ -148,7 +148,9 @@ class MemgraphClient:
             if not page_results:
                 break
             
-            all_results.extend(page_results)
+            total_results += len(page_results)
+            logger.info(f"Memgraph query returned {len(page_results)} records")
+            yield page_results
             
             # If we got fewer results than page_size, we're done
             if len(page_results) < page_size:
@@ -156,6 +158,5 @@ class MemgraphClient:
             
             offset += page_size
         
-        logger.info(f"Executed paginated query, returned {len(all_results)} total results")
-        return all_results
+        logger.debug(f"Executed paginated query, yielded {total_results} total results across pages")
 

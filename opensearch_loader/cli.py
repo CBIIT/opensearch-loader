@@ -17,6 +17,12 @@ def setup_logging(verbose: bool = False):
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    
+    # Set opensearch library loggers to WARNING to suppress INFO level HTTP request logs
+    logging.getLogger('opensearch').setLevel(logging.WARNING)
+    logging.getLogger('opensearchpy').setLevel(logging.WARNING)
+    logging.getLogger('elasticsearch').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 
 def parse_args():

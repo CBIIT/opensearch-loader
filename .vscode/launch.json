@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "OpenSearch Loader (config.local.yaml)",
+            "type": "python",
+            "request": "launch",
+            "module": "opensearch_loader.cli",
+            "args": [
+                "--config",
+                "/Users/muelleras/Code/opensearch-loader/config.local.yaml"
+            ],
+            "python": "${workspaceFolder}/venv/bin/python",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        }
+    ]
+}
+
