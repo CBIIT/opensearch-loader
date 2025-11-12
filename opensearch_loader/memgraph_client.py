@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 # Cypher keywords that indicate write operations
 WRITE_KEYWORDS = {
     'CREATE', 'SET', 'DELETE', 'REMOVE', 'MERGE', 'DETACH', 'DROP',
-    'FOREACH', 'CALL'
+    'FOREACH'
 }
 
 
