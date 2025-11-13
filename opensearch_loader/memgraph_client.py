@@ -124,13 +124,16 @@ class MemgraphClient:
         return results
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
-                               page_size: int = 10000) -> Iterator[List[Dict[str, Any]]]:
+                               page_size: int = 10000, index_name: Optional[str] = None,
+                               query_name: Optional[str] = None) -> Iterator[List[Dict[str, Any]]]:
         """Execute a query with pagination, yielding pages one at a time.
         
         Args:
             query: Cypher query string (must contain $skip and $limit parameters)
             parameters: Optional query parameters (will be merged with pagination params)
             page_size: Number of results per page (default: 10000)
+            index_name: Optional index name for logging prefix
+            query_name: Optional query name for logging prefix
             
         Yields:
             List of result dictionaries for each page
@@ -149,7 +152,12 @@ class MemgraphClient:
                 break
             
             total_results += len(page_results)
-            logger.info(f"Memgraph query returned {len(page_results)} records")
+            if index_name and query_name:
+                logger.info(f"{index_name}:{query_name}: Memgraph query returned {len(page_results)} records")
+            elif index_name:
+                logger.info(f"{index_name}: Memgraph query returned {len(page_results)} records")
+            else:
+                logger.info(f"Memgraph query returned {len(page_results)} records")
             yield page_results
             
             # If we got fewer results than page_size, we're done

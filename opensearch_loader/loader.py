@@ -148,7 +148,8 @@ class Loader:
         variables = initial_query_config.get('variables', {})
         page_size = initial_query_config.get('page_size', 10000)  # Default to 10000
         
-        logger.info(f"Starting initial query for {index_name}")
+        query_name = "Initial Query"
+        logger.info(f"{index_name}:{query_name}: Starting initial query")
         
         total_documents = 0
         page_num = 0
@@ -156,7 +157,8 @@ class Loader:
         try:
             # Process pages incrementally
             for page_documents in self.memgraph.execute_paginated_query(
-                query, parameters=variables, page_size=page_size
+                query, parameters=variables, page_size=page_size,
+                index_name=index_name, query_name=query_name
             ):
                 page_num += 1
                 
@@ -165,18 +167,18 @@ class Loader:
                 
                 # Process this page with retry logic
                 try:
-                    logger.info(f"Loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                    self.opensearch.bulk_upsert(index_name, page_documents, id_field)
+                    logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_documents)} documents")
+                    self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
                     total_documents += len(page_documents)
-                    logger.info(f"Completed loading page {page_num} to OpenSearch: {len(page_documents)} documents (total: {total_documents})")
+                    logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_documents)} documents (total: {total_documents})")
                 except Exception as e:
                     # Retry once
                     logger.warning(f"Error processing page {page_num} for {index_name}, retrying: {e}")
                     try:
-                        logger.info(f"Retrying loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                        self.opensearch.bulk_upsert(index_name, page_documents, id_field)
+                        logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_documents)} documents")
+                        self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
                         total_documents += len(page_documents)
-                        logger.info(f"Retry successful for page {page_num}: {len(page_documents)} documents (total: {total_documents})")
+                        logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_documents)} documents (total: {total_documents})")
                     except Exception as retry_error:
                         logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Skipping entire index.")
                         raise
@@ -184,7 +186,7 @@ class Loader:
             if total_documents == 0:
                 logger.warning(f"No documents returned from initial query for {index_name}")
             else:
-                logger.info(f"Completed initial query for {index_name}: {total_documents} total documents processed")
+                logger.info(f"{index_name}:{query_name}: Completed initial query: {total_documents} total documents processed")
         except ValueError as e:
             logger.error(f"Error executing initial query for {index_name}: {e}. Skipping to next query.")
             raise
@@ -203,16 +205,24 @@ class Loader:
             id_field: Field name to use as document ID
             update_query_config: Update query configuration
         """
-        query_name = update_query_config.get('name', 'unnamed')
+        query_name = update_query_config.get('name')
         query = update_query_config.get('query')
         if not query:
-            logger.warning(f"Update query '{query_name}' missing query, skipping")
+            query_display = query_name if query_name else 'unnamed'
+            logger.warning(f"Update query '{query_display}' missing query, skipping")
             return
+        
+        # Warn if query name is missing
+        if not query_name:
+            logger.warning(f"{index_name}: Update query missing name, proceeding without query name prefix")
         
         variables = update_query_config.get('variables', {})
         page_size = update_query_config.get('page_size', 10000)  # Default to 10000
         
-        logger.info(f"Starting update query '{query_name}' for {index_name}")
+        if query_name:
+            logger.info(f"{index_name}:{query_name}: Starting update query")
+        else:
+            logger.info(f"{index_name}: Starting update query")
         
         total_updates = 0
         page_num = 0
@@ -220,7 +230,8 @@ class Loader:
         try:
             # Process pages incrementally
             for page_updates in self.memgraph.execute_paginated_query(
-                query, parameters=variables, page_size=page_size
+                query, parameters=variables, page_size=page_size,
+                index_name=index_name, query_name=query_name
             ):
                 page_num += 1
                 
@@ -229,27 +240,48 @@ class Loader:
                 
                 # Process this page with retry logic
                 try:
-                    logger.info(f"Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                    self.opensearch.bulk_update(index_name, page_updates, id_field)
+                    if query_name:
+                        logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
+                    else:
+                        logger.info(f"{index_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
+                    self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
                     total_updates += len(page_updates)
-                    logger.info(f"Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
+                    if query_name:
+                        logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
+                    else:
+                        logger.info(f"{index_name}: Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
                 except Exception as e:
                     # Retry once
-                    logger.warning(f"Error processing page {page_num} for update query '{query_name}' in {index_name}, retrying: {e}")
+                    query_display = query_name if query_name else 'unnamed'
+                    logger.warning(f"Error processing page {page_num} for update query '{query_display}' in {index_name}, retrying: {e}")
                     try:
-                        logger.info(f"Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                        self.opensearch.bulk_update(index_name, page_updates, id_field)
+                        if query_name:
+                            logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
+                        else:
+                            logger.info(f"{index_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
+                        self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
                         total_updates += len(page_updates)
-                        logger.info(f"Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
+                        if query_name:
+                            logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
+                        else:
+                            logger.info(f"{index_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
                     except Exception as retry_error:
-                        logger.error(f"Retry failed for page {page_num} for update query '{query_name}' in {index_name}: {retry_error}. Skipping entire index.")
+                        query_display = query_name if query_name else 'unnamed'
+                        logger.error(f"Retry failed for page {page_num} for update query '{query_display}' in {index_name}: {retry_error}. Skipping entire index.")
                         raise
             
             if total_updates == 0:
-                logger.info(f"No updates returned from query '{query_name}' for {index_name}")
+                if query_name:
+                    logger.info(f"{index_name}:{query_name}: No updates returned from query")
+                else:
+                    logger.info(f"{index_name}: No updates returned from query")
             else:
-                logger.info(f"Completed update query '{query_name}' for {index_name}: {total_updates} total updates processed")
+                if query_name:
+                    logger.info(f"{index_name}:{query_name}: Completed update query: {total_updates} total updates processed")
+                else:
+                    logger.info(f"{index_name}: Completed update query: {total_updates} total updates processed")
         except ValueError as e:
-            logger.error(f"Error executing update query '{query_name}' for {index_name}: {e}. Continuing to next query.")
+            query_display = query_name if query_name else 'unnamed'
+            logger.error(f"Error executing update query '{query_display}' for {index_name}: {e}. Continuing to next query.")
             raise
 

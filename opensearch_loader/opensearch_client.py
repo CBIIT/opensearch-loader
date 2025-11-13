@@ -142,13 +142,15 @@ class OpenSearchClient:
         # Upsert the merged document
         self.upsert_document(index_name, doc_id, merged)
     
-    def bulk_upsert(self, index_name: str, documents: List[Dict[str, Any]], id_field: str):
+    def bulk_upsert(self, index_name: str, documents: List[Dict[str, Any]], id_field: str,
+                    query_name: Optional[str] = None):
         """Bulk upsert documents.
         
         Args:
             index_name: Name of the index
             documents: List of document dictionaries
             id_field: Field name to use as document ID
+            query_name: Optional query name for logging prefix
         """
         actions = []
         for doc in documents:
@@ -168,13 +170,19 @@ class OpenSearchClient:
         
         if actions:
             success, failed = bulk(self.client, actions, refresh=True)
-            logger.debug(f"Bulk upserted {success} documents to {index_name}")
+            if index_name and query_name:
+                logger.debug(f"{index_name}:{query_name}: Bulk upserted {success} documents")
+            elif index_name:
+                logger.debug(f"{index_name}: Bulk upserted {success} documents")
+            else:
+                logger.debug(f"Bulk upserted {success} documents to {index_name}")
             if failed:
                 logger.warning(f"Failed to upsert {len(failed)} documents")
         else:
             logger.warning("No documents to upsert")
     
-    def bulk_update(self, index_name: str, updates: List[Dict[str, Any]], id_field: str):
+    def bulk_update(self, index_name: str, updates: List[Dict[str, Any]], id_field: str,
+                    query_name: Optional[str] = None):
         """Bulk update existing documents using OpenSearch Update API.
         
         Only updates existing documents - missing documents are skipped.
@@ -183,6 +191,7 @@ class OpenSearchClient:
             index_name: Name of the index
             updates: List of update dictionaries
             id_field: Field name to use as document ID
+            query_name: Optional query name for logging prefix
         """
         if not updates:
             logger.warning("No updates to process")
@@ -195,21 +204,33 @@ class OpenSearchClient:
         total_updates = len(updates)
         num_batches = (total_updates + BATCH_SIZE - 1) // BATCH_SIZE  # Ceiling division
         
-        logger.debug(f"Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
+        if index_name and query_name:
+            logger.debug(f"{index_name}:{query_name}: Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
+        elif index_name:
+            logger.debug(f"{index_name}: Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
+        else:
+            logger.debug(f"Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
         
         for i in range(0, total_updates, BATCH_SIZE):
             batch = updates[i:i + BATCH_SIZE]
             batch_num = (i // BATCH_SIZE) + 1
-            logger.debug(f"Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
-            self._process_update_batch(index_name, batch, id_field)
+            if index_name and query_name:
+                logger.debug(f"{index_name}:{query_name}: Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
+            elif index_name:
+                logger.debug(f"{index_name}: Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
+            else:
+                logger.debug(f"Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
+            self._process_update_batch(index_name, batch, id_field, query_name=query_name)
     
-    def _process_update_batch(self, index_name: str, updates: List[Dict[str, Any]], id_field: str):
+    def _process_update_batch(self, index_name: str, updates: List[Dict[str, Any]], id_field: str,
+                             query_name: Optional[str] = None):
         """Process a single batch of update operations.
         
         Args:
             index_name: Name of the index
             updates: List of update dictionaries for this batch
             id_field: Field name to use as document ID
+            query_name: Optional query name for logging prefix
         """
         actions = []
         for update in updates:
@@ -241,7 +262,12 @@ class OpenSearchClient:
         # Execute bulk update
         try:
             success, failed = bulk(self.client, actions, refresh=True)
-            logger.debug(f"Bulk updated {success} documents in {index_name}")
+            if index_name and query_name:
+                logger.debug(f"{index_name}:{query_name}: Bulk updated {success} documents")
+            elif index_name:
+                logger.debug(f"{index_name}: Bulk updated {success} documents")
+            else:
+                logger.debug(f"Bulk updated {success} documents in {index_name}")
             
             if failed:
                 # Count missing documents separately
@@ -266,7 +292,12 @@ class OpenSearchClient:
                         other_errors.append(item)
                 
                 if missing_count > 0:
-                    logger.debug(f"Skipped {missing_count} missing documents in {index_name}")
+                    if index_name and query_name:
+                        logger.debug(f"{index_name}:{query_name}: Skipped {missing_count} missing documents")
+                    elif index_name:
+                        logger.debug(f"{index_name}: Skipped {missing_count} missing documents")
+                    else:
+                        logger.debug(f"Skipped {missing_count} missing documents in {index_name}")
                 
                 if other_errors:
                     logger.warning(f"Failed to update {len(other_errors)} documents in {index_name}")

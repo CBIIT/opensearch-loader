@@ -14,7 +14,7 @@ def setup_logging(verbose: bool = False):
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format='%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -23,6 +23,34 @@ def setup_logging(verbose: bool = False):
     logging.getLogger('opensearchpy').setLevel(logging.WARNING)
     logging.getLogger('elasticsearch').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+
+def print_config(config: Config):
+    """Print configuration variables excluding connection information.
+    
+    Args:
+        config: Configuration object
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Configuration:")
+    
+    # Fields to exclude from memgraph and opensearch
+    excluded_memgraph = {'host', 'port', 'username', 'password'}
+    excluded_opensearch = {'host', 'use_ssl', 'verify_certs', 'username', 'password'}
+    
+    # Print non-connection config values
+    if config.get('index_spec_file'):
+        logger.info(f"  index_spec_file: {config.get('index_spec_file')}")
+    
+    if config.get('clear_existing_indices') is not None:
+        logger.info(f"  clear_existing_indices: {config.get('clear_existing_indices')}")
+    
+    if config.get('allow_index_creation') is not None:
+        logger.info(f"  allow_index_creation: {config.get('allow_index_creation')}")
+    
+    selected_indices = config.get_selected_indices()
+    if selected_indices:
+        logger.info(f"  selected_indices: {selected_indices}")
 
 
 def parse_args():
@@ -161,6 +189,9 @@ def main():
                 config_file = str(default_config)
         
         config = Config(config_file=config_file, cli_args=args)
+        
+        # Print configuration (excluding connection info)
+        print_config(config)
         
         # Create and run loader
         loader = Loader(config)
