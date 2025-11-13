@@ -128,6 +128,11 @@ def parse_args():
         action='store_false',
         help='Do not allow creation of indices if they do not exist (overrides config and env)'
     )
+    parser.add_argument(
+        '--selected-indices',
+        type=str,
+        help='Comma-separated list of index names to load (overrides config and env). Only indices in this list will be processed.'
+    )
     
     # Other options
     parser.add_argument(

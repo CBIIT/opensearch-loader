@@ -4,7 +4,7 @@ import os
 import yaml
 import argparse
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ class Config:
             'OS_LOADER_INDEX_SPEC_FILE': ('index_spec_file',),
             'OS_LOADER_CLEAR_EXISTING_INDICES': ('clear_existing_indices',),
             'OS_LOADER_ALLOW_INDEX_CREATION': ('allow_index_creation',),
+            'OS_LOADER_SELECTED_INDICES': ('selected_indices',),
         }
         
         for env_var, path in env_mapping.items():
@@ -168,6 +169,13 @@ class Config:
         
         if args.allow_index_creation is not None:
             self.config['allow_index_creation'] = args.allow_index_creation
+        
+        if args.selected_indices:
+            # Handle comma-separated list from CLI and trim each value
+            if isinstance(args.selected_indices, str):
+                self.config['selected_indices'] = [v.strip() for v in args.selected_indices.split(',') if v.strip()]
+            elif isinstance(args.selected_indices, list):
+                self.config['selected_indices'] = [v.strip() if isinstance(v, str) else v for v in args.selected_indices]
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
@@ -192,6 +200,32 @@ class Config:
     def get_allow_index_creation(self) -> bool:
         """Get allow_index_creation setting."""
         return self.config.get('allow_index_creation', True)
+    
+    def get_selected_indices(self) -> Optional[List[str]]:
+        """Get selected_indices setting.
+        
+        Returns a list of index names with whitespace trimmed, or None if not set or empty.
+        If None is returned, all indices should be processed.
+        """
+        selected = self.config.get('selected_indices')
+        if selected is None:
+            return None
+        
+        # Ensure it's a list and trim each value
+        if isinstance(selected, list):
+            # If empty list is provided, return None to process all indices
+            if not selected:
+                return None
+            # Trim each index name and filter out empty strings
+            trimmed = [v.strip() if isinstance(v, str) else str(v).strip() for v in selected if v]
+            # If all values were empty strings, return None to process all indices
+            return trimmed if trimmed else None
+        elif isinstance(selected, str):
+            # Handle string case (shouldn't happen with proper config, but defensive)
+            trimmed = selected.strip()
+            return [trimmed] if trimmed else None
+        
+        return None
 
 
 def load_index_spec(index_spec_file: str) -> Dict[str, Any]:

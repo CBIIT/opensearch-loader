@@ -63,7 +63,39 @@ class Loader:
         if not indices:
             raise ValueError("No indices defined in specification file")
         
-        logger.info(f"Processing {len(indices)} indices")
+        # Filter indices based on selected_indices configuration
+        # If selected_indices is None or empty list, process all indices
+        selected_indices = self.config.get_selected_indices()
+        if selected_indices:
+            # Trim all selected index names (defensive trimming)
+            selected_set = {name.strip() for name in selected_indices if name}
+            
+            # Create a map of index_name to index_config for efficient lookup
+            index_map = {}
+            for index_config in indices:
+                index_name = index_config.get('index_name')
+                if index_name:
+                    # Trim index name for comparison
+                    trimmed_name = index_name.strip()
+                    index_map[trimmed_name] = index_config
+            
+            # Check for selected indices that don't exist and log warnings
+            for selected_name in selected_set:
+                if selected_name not in index_map:
+                    logger.warning(f"Selected index '{selected_name}' does not exist in indices file. Skipping.")
+            
+            # Filter indices to only those in selected_set
+            filtered_indices = [index_config for index_config in indices 
+                              if index_config.get('index_name', '').strip() in selected_set]
+            
+            if not filtered_indices:
+                logger.warning("No valid indices found after filtering. Nothing to process.")
+                return
+            
+            logger.info(f"Filtering enabled: {len(selected_set)} index(es) selected, {len(filtered_indices)} will be processed")
+            indices = filtered_indices
+        else:
+            logger.info(f"Processing all {len(indices)} indices")
         
         start_time = time.time()
         
