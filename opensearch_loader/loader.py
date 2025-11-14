@@ -2,8 +2,10 @@
 
 import logging
 import time
-from typing import Dict, Any, List
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 from pathlib import Path
+from collections import defaultdict
 
 from .config import Config, load_index_spec
 from .memgraph_client import MemgraphClient
@@ -42,10 +44,35 @@ class Loader:
             username=os_config.get('username'),
             password=os_config.get('password')
         )
+        
+        # Statistics tracking
+        self.index_stats: List[Dict[str, Any]] = []
+        # Query timing: key is "index:query_name", value is list of execution times
+        self.query_timings: Dict[str, List[float]] = defaultdict(list)
     
     def close(self):
         """Close all client connections."""
         self.memgraph.close()
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds into minutes:seconds format.
+        
+        Args:
+            seconds: Time in seconds
+            
+        Returns:
+            Formatted string like "2m 35s" or "45s"
+        """
+        if seconds < 0:
+            return "N/A"
+        
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        
+        if minutes > 0:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
     
     def load(self):
         """Load data from Memgraph to OpenSearch."""
@@ -101,20 +128,52 @@ class Loader:
         
         # Process each index
         for index_config in indices:
+            index_name = index_config.get('index_name', 'unknown')
+            index_start_time = time.time()
+            
             try:
-                self._process_index(index_config)
+                document_count = self._process_index(index_config)
+                index_end_time = time.time()
+                index_duration = index_end_time - index_start_time
+                
+                # Record successful index statistics
+                self.index_stats.append({
+                    'index_name': index_name,
+                    'document_count': document_count,
+                    'duration': index_duration,
+                    'error': False
+                })
             except Exception as e:
-                logger.error(f"Error processing index {index_config.get('index_name', 'unknown')}: {e}. Skipping to next index.")
+                index_end_time = time.time()
+                index_duration = index_end_time - index_start_time
+                error_occurred = True
+                logger.error(f"Error processing index {index_name}: {e}. Skipping to next index.")
+                
+                # Record failed index statistics
+                self.index_stats.append({
+                    'index_name': index_name,
+                    'document_count': 'ERROR',
+                    'duration': index_duration,
+                    'error': True
+                })
                 continue
         
         total_time = time.time() - start_time
-        logger.info(f"Total execution time: {total_time:.2f} seconds")
+        
+        # Print and save summary
+        self._print_summary(total_time)
+        
+        # Save query timings
+        self._save_query_timings()
     
-    def _process_index(self, index_config: Dict[str, Any]):
+    def _process_index(self, index_config: Dict[str, Any]) -> int:
         """Process a single index.
         
         Args:
             index_config: Index configuration dictionary
+            
+        Returns:
+            Number of documents loaded from initial query
         """
         index_name = index_config.get('index_name')
         if not index_name:
@@ -151,11 +210,16 @@ class Loader:
         query_name = "Initial Query"
         logger.info(f"{index_name}:{query_name}: Starting initial query")
         
+        # Track query execution time (will be set after generator is exhausted)
+        query_key = f"{index_name}:{query_name}"
+        
         total_documents = 0
         page_num = 0
         
         try:
             # Process pages incrementally
+            # Note: Query execution time is tracked inside execute_paginated_query
+            # and will be available in self.memgraph.last_query_time after the loop
             for page_documents in self.memgraph.execute_paginated_query(
                 query, parameters=variables, page_size=page_size,
                 index_name=index_name, query_name=query_name
@@ -190,11 +254,19 @@ class Loader:
         except ValueError as e:
             logger.error(f"Error executing initial query for {index_name}: {e}. Skipping to next query.")
             raise
+        finally:
+            # Record query execution time (only Memgraph query time, not OpenSearch operations)
+            # This is set after the generator is exhausted
+            query_duration = self.memgraph.last_query_time
+            if query_duration > 0:
+                self.query_timings[query_key].append(query_duration)
         
         # Execute update queries
         update_queries = index_config.get('update_queries', [])
         for update_query_config in update_queries:
             self._process_update_query(index_name, id_field, update_query_config)
+        
+        return total_documents
     
     def _process_update_query(self, index_name: str, id_field: str,
                              update_query_config: Dict[str, Any]):
@@ -215,6 +287,7 @@ class Loader:
         # Warn if query name is missing
         if not query_name:
             logger.warning(f"{index_name}: Update query missing name, proceeding without query name prefix")
+            query_name = "unnamed"
         
         variables = update_query_config.get('variables', {})
         page_size = update_query_config.get('page_size', 10000)  # Default to 10000
@@ -224,11 +297,16 @@ class Loader:
         else:
             logger.info(f"{index_name}: Starting update query")
         
+        # Track query execution time (will be set after generator is exhausted)
+        query_key = f"{index_name}:{query_name}"
+        
         total_updates = 0
         page_num = 0
         
         try:
             # Process pages incrementally
+            # Note: Query execution time is tracked inside execute_paginated_query
+            # and will be available in self.memgraph.last_query_time after the loop
             for page_updates in self.memgraph.execute_paginated_query(
                 query, parameters=variables, page_size=page_size,
                 index_name=index_name, query_name=query_name
@@ -284,4 +362,107 @@ class Loader:
             query_display = query_name if query_name else 'unnamed'
             logger.error(f"Error executing update query '{query_display}' for {index_name}: {e}. Continuing to next query.")
             raise
+        finally:
+            # Record query execution time (only Memgraph query time, not OpenSearch operations)
+            # This is set after the generator is exhausted
+            query_duration = self.memgraph.last_query_time
+            if query_duration > 0:
+                self.query_timings[query_key].append(query_duration)
+    
+    def _print_summary(self, total_time: float):
+        """Print and save loading summary.
+        
+        Args:
+            total_time: Total execution time in seconds
+        """
+        # Create logs directory if it doesn't exist
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d-%H:%M")
+        summary_filename = logs_dir / f"{timestamp}.loading-summary"
+        
+        # Build summary text
+        lines = []
+        lines.append("=" * 80)
+        lines.append("Index Loading Summary")
+        lines.append("=" * 80)
+        lines.append("")
+        lines.append(f"{'Index Name':<40} {'Documents':<15} {'Time':<15}")
+        lines.append("-" * 80)
+        
+        for stat in self.index_stats:
+            index_name = stat['index_name']
+            doc_count = stat['document_count']
+            duration = stat['duration']
+            error = stat['error']
+            
+            # Format document count
+            if error:
+                doc_str = "ERROR"
+            else:
+                doc_str = str(doc_count)
+            
+            # Format time
+            time_str = self._format_time(duration)
+            
+            lines.append(f"{index_name:<40} {doc_str:<15} {time_str:<15}")
+        
+        lines.append("-" * 80)
+        lines.append(f"{'Total':<40} {'':<15} {self._format_time(total_time):<15}")
+        lines.append("=" * 80)
+        
+        summary_text = "\n".join(lines)
+        
+        # Print to console
+        logger.info("\n" + summary_text)
+        
+        # Save to file
+        try:
+            with open(summary_filename, 'w') as f:
+                f.write(summary_text)
+            logger.info(f"Summary saved to {summary_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save summary to file: {e}")
+    
+    def _save_query_timings(self):
+        """Save query execution timing data to file."""
+        if not self.query_timings:
+            return
+        
+        # Create logs directory if it doesn't exist
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d-%H:%M")
+        timing_filename = logs_dir / f"{timestamp}.query-timing"
+        
+        # Build timing text
+        lines = []
+        lines.append("Query Execution Times (Average)")
+        lines.append("=" * 80)
+        lines.append("")
+        lines.append(f"{'Query':<60} {'Avg Time (s)':<20}")
+        lines.append("-" * 80)
+        
+        # Sort by query key for consistent output
+        for query_key in sorted(self.query_timings.keys()):
+            timings = self.query_timings[query_key]
+            if timings:
+                avg_time = sum(timings) / len(timings)
+                lines.append(f"{query_key:<60} {avg_time:.4f}")
+        
+        lines.append("=" * 80)
+        
+        timing_text = "\n".join(lines)
+        
+        # Save to file (do not print to console)
+        try:
+            with open(timing_filename, 'w') as f:
+                f.write(timing_text)
+            logger.debug(f"Query timings saved to {timing_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save query timings to file: {e}")
 

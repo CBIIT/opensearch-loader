@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from typing import List, Dict, Any, Optional, Iterator
 from neo4j import GraphDatabase
 
@@ -30,6 +31,7 @@ class MemgraphClient:
         uri = f"bolt://{host}:{port}"
         auth = (username, password) if username and password else None
         self.driver = GraphDatabase.driver(uri, auth=auth)
+        self.last_query_time = 0.0  # Track total query execution time for last paginated query
         logger.info(f"Connected to Memgraph at {uri}")
     
     def close(self):
@@ -128,6 +130,9 @@ class MemgraphClient:
                                query_name: Optional[str] = None) -> Iterator[List[Dict[str, Any]]]:
         """Execute a query with pagination, yielding pages one at a time.
         
+        Also tracks total Memgraph query execution time (excluding OpenSearch operations)
+        in self.last_query_time after the generator is exhausted.
+        
         Args:
             query: Cypher query string (must contain $skip and $limit parameters)
             parameters: Optional query parameters (will be merged with pagination params)
@@ -140,13 +145,21 @@ class MemgraphClient:
         """
         offset = 0
         total_results = 0
+        total_query_time = 0.0  # Track total Memgraph query execution time
+        
+        # Reset last_query_time at the start to avoid stale values
+        self.last_query_time = 0.0
         
         while True:
             # Merge pagination parameters with existing parameters
             pagination_params = {'skip': offset, 'limit': page_size}
             merged_params = {**(parameters or {}), **pagination_params}
             
+            # Track time for this query execution only (not OpenSearch operations)
+            query_start = time.time()
             page_results = self.execute_query(query, merged_params)
+            query_end = time.time()
+            total_query_time += (query_end - query_start)
             
             if not page_results:
                 break
@@ -166,5 +179,8 @@ class MemgraphClient:
             
             offset += page_size
         
+        # Store the total query time for this paginated query
+        # This will be available after the generator is exhausted
+        self.last_query_time = total_query_time
         logger.debug(f"Executed paginated query, yielded {total_results} total results across pages")
 
