@@ -128,4 +128,4 @@ indices.yaml
 *.pyc
 .DS_Store
 .vscode/
-
+logs/
