@@ -261,10 +261,17 @@ class Loader:
             if query_duration > 0:
                 self.query_timings[query_key].append(query_duration)
         
+        # Refresh index after all initial upsert operations complete
+        self.opensearch.refresh_index(index_name)
+        
         # Execute update queries
         update_queries = index_config.get('update_queries', [])
         for update_query_config in update_queries:
             self._process_update_query(index_name, id_field, update_query_config)
+        
+        # Refresh index after all update queries complete
+        if update_queries:
+            self.opensearch.refresh_index(index_name)
         
         return total_documents
     

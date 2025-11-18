@@ -88,6 +88,15 @@ class OpenSearchClient:
         else:
             logger.info(f"Index already exists: {index_name}")
     
+    def refresh_index(self, index_name: str):
+        """Refresh an index to make all operations visible.
+        
+        Args:
+            index_name: Name of the index to refresh
+        """
+        self.client.indices.refresh(index=index_name)
+        logger.debug(f"Refreshed index: {index_name}")
+    
     def get_document(self, index_name: str, doc_id: str) -> Optional[Dict[str, Any]]:
         """Get a document by ID.
         
@@ -169,7 +178,7 @@ class OpenSearchClient:
             actions.append(action)
         
         if actions:
-            success, failed = bulk(self.client, actions, refresh=True)
+            success, failed = bulk(self.client, actions, refresh=False)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk upserted {success} documents")
             elif index_name:
@@ -261,7 +270,7 @@ class OpenSearchClient:
         
         # Execute bulk update
         try:
-            success, failed = bulk(self.client, actions, refresh=True)
+            success, failed = bulk(self.client, actions, refresh=False)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk updated {success} documents")
             elif index_name:
