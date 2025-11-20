@@ -60,31 +60,46 @@ class OpenSearchClient:
         else:
             logger.info(f"Index does not exist, skipping deletion: {index_name}")
     
-    def create_index(self, index_name: str, id_field: Optional[str] = None):
+    def create_index(self, index_name: str, id_field: Optional[str] = None,
+                     mapping: Optional[Dict[str, Any]] = None):
         """Create an index with basic settings.
         
         Args:
             index_name: Name of the index to create
-            id_field: Optional field name to map as keyword type
+            id_field: Optional field name to map as keyword type (used if mapping not provided)
+            mapping: Optional custom mapping dictionary (overrides id_field if provided)
         """
         if not self.index_exists(index_name):
-            # Create index with mappings if id_field is provided
-            if id_field:
-                body = {
-                    "mappings": {
-                        "properties": {
-                            id_field: {
-                                "type": "keyword"
-                            }
+            body = {}
+            
+            # Add settings
+            body["settings"] = {
+                "number_of_shards": 1,
+                "index.mapping.nested_objects.limit": 100000
+            }
+            
+            # Add mappings
+            if mapping:
+                # Use provided custom mapping
+                body["mappings"] = {
+                    "properties": mapping
+                }
+                logger.info(f"Created index: {index_name} with custom mapping")
+            elif id_field:
+                # Use id_field to create simple mapping
+                body["mappings"] = {
+                    "properties": {
+                        id_field: {
+                            "type": "keyword"
                         }
                     }
                 }
-                self.client.indices.create(index=index_name, body=body)
                 logger.info(f"Created index: {index_name} with {id_field} as keyword")
             else:
-                # Create index with basic settings (OpenSearch will auto-detect field types)
-                self.client.indices.create(index=index_name)
-                logger.info(f"Created index: {index_name}")
+                # No mapping specified - OpenSearch will auto-detect field types
+                logger.info(f"Created index: {index_name} (auto-detect field types)")
+            
+            self.client.indices.create(index=index_name, body=body)
         else:
             logger.info(f"Index already exists: {index_name}")
     

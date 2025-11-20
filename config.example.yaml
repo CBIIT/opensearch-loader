@@ -1,18 +1,38 @@
+# Memgraph connection settings
 memgraph:
-  host: localhost
-  port: 7687
-  username: null
-  password: null
+  host: localhost  # Memgraph host address
+  port: 7687  # Memgraph port (default: 7687)
+  username: null  # Optional: Memgraph username (omit for unauthenticated connections)
+  password: null  # Optional: Memgraph password (omit for unauthenticated connections)
 
+# OpenSearch connection settings
 opensearch:
-  host: "http://localhost:9200"
-  use_ssl: false
-  verify_certs: false
-  # username (optional - omit for unauthenticated connections)
-  # password (optional - omit for unauthenticated connections)
+  host: "http://localhost:9200"  # OpenSearch host URL
+  use_ssl: false  # Whether to use SSL for OpenSearch connections
+  verify_certs: false  # Whether to verify SSL certificates
+  # username: null  # Optional: OpenSearch username (omit for unauthenticated connections)
+  # password: null  # Optional: OpenSearch password (omit for unauthenticated connections)
 
-index_spec_file: "indices.yaml"  # Path to index specification file
-clear_existing_indices: false  # Clear all existing indices before starting (universal)
-allow_index_creation: true  # Allow creation of indices if missing (universal)
-# selected_indices: ["users", "products"]  # Optional: List of index names to load. Only indices in this list will be processed. If not specified, all indices will be processed.
+# Index specification and processing settings
+index_spec_file: "indices.yaml"  # Path to index specification YAML file
+clear_existing_indices: false  # Clear all existing indices before starting (universal setting)
+allow_index_creation: true  # Allow creation of indices if they don't exist (universal setting)
+
+# Optional: List of index names to load. Only indices in this list will be processed.
+# If not specified or empty, all indices will be processed.
+# selected_indices:
+#   - "users"
+#   - "products"
+#   - "about_page"
+#   - "model_nodes"
+
+# Optional: Path to about file YAML for about page indices
+# Required if you have indices with type: "about_file"
+# about_file: "/path/to/aboutPagesContent.yaml"
+
+# Optional: List of model YAML file paths for model indices
+# Required if you have indices with type: "model"
+# model_files:
+#   - "/path/to/model-desc/cds-model.yml"
+#   - "/path/to/model-desc/cds-model-props.yml"
 

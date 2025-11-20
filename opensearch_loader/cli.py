@@ -162,6 +162,18 @@ def parse_args():
         help='Comma-separated list of index names to load (overrides config and env). Only indices in this list will be processed.'
     )
     
+    # About and model file settings
+    parser.add_argument(
+        '--about-file',
+        type=str,
+        help='Path to about file YAML (overrides config and env)'
+    )
+    parser.add_argument(
+        '--model-files',
+        type=str,
+        help='Comma-separated list of model YAML file paths (overrides config and env)'
+    )
+    
     # Other options
     parser.add_argument(
         '-v', '--verbose',

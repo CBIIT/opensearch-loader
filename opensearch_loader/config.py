@@ -58,6 +58,8 @@ class Config:
             'OS_LOADER_CLEAR_EXISTING_INDICES': ('clear_existing_indices',),
             'OS_LOADER_ALLOW_INDEX_CREATION': ('allow_index_creation',),
             'OS_LOADER_SELECTED_INDICES': ('selected_indices',),
+            'OS_LOADER_ABOUT_FILE': ('about_file',),
+            'OS_LOADER_MODEL_FILES': ('model_files',),
         }
         
         for env_var, path in env_mapping.items():
@@ -176,6 +178,17 @@ class Config:
                 self.config['selected_indices'] = [v.strip() for v in args.selected_indices.split(',') if v.strip()]
             elif isinstance(args.selected_indices, list):
                 self.config['selected_indices'] = [v.strip() if isinstance(v, str) else v for v in args.selected_indices]
+        
+        if args.about_file:
+            self.config['about_file'] = args.about_file.strip() if isinstance(args.about_file, str) else args.about_file
+        
+        if args.model_files:
+            # Handle comma-separated list from CLI and trim each value
+            if isinstance(args.model_files, str):
+                self.config['model_files'] = [v.strip() for v in args.model_files.split(',') if v.strip()]
+            elif isinstance(args.model_files, list):
+                self.config['model_files'] = [v.strip() if isinstance(v, str) else v for v in args.model_files]
+        
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
@@ -226,7 +239,22 @@ class Config:
             return [trimmed] if trimmed else None
         
         return None
-
+    
+    def get_about_file(self) -> Optional[str]:
+        """Get about_file path."""
+        return self.config.get('about_file')
+    
+    def get_model_files(self) -> Optional[List[str]]:
+        """Get model_files list."""
+        model_files = self.config.get('model_files')
+        if model_files is None:
+            return None
+        if isinstance(model_files, list):
+            return [v.strip() if isinstance(v, str) else str(v).strip() for v in model_files if v]
+        elif isinstance(model_files, str):
+            return [model_files.strip()] if model_files.strip() else None
+        return None
+    
 
 def load_index_spec(index_spec_file: str) -> Dict[str, Any]:
     """Load index specification from YAML file."""

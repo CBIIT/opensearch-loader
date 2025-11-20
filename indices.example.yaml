@@ -29,3 +29,37 @@ indices:
           since: "2024-01-01T00:00:00Z"
         page_size: 500
 
+  # About file index example
+  # Requires about_file to be configured in config.yaml
+  # Mapping is optional - defaults will be used if not specified
+  - index_name: "about_page"
+    type: "about_file"
+    # Optional: custom mapping (if omitted, default mapping is used)
+    # mapping:
+    #   page:
+    #     type: keyword
+    #   title:
+    #     type: keyword
+    #   primaryContentImage:
+    #     type: text
+    #   content:
+    #     type: object
+
+  # Model indices examples
+  # Requires model_files to be configured in config.yaml
+  # Mapping is optional - defaults are auto-generated based on subtype
+  - index_name: "model_nodes"
+    type: "model"
+    subtype: "node"
+    # Optional: custom mapping (if omitted, default mapping for 'node' subtype is used)
+
+  - index_name: "model_properties"
+    type: "model"
+    subtype: "property"
+    # Optional: custom mapping (if omitted, default mapping for 'property' subtype is used)
+
+  - index_name: "model_values"
+    type: "model"
+    subtype: "value"
+    # Optional: custom mapping (if omitted, default mapping for 'value' subtype is used)
+
