@@ -137,6 +137,7 @@ def parse_args():
     parser.add_argument(
         '--clear-existing-indices',
         action='store_true',
+        default=argparse.SUPPRESS,
         help='Clear existing indices before starting (overrides config and env)'
     )
     parser.add_argument(
@@ -148,6 +149,7 @@ def parse_args():
     parser.add_argument(
         '--allow-index-creation',
         action='store_true',
+        default=argparse.SUPPRESS,
         help='Allow creation of indices if they do not exist (overrides config and env)'
     )
     parser.add_argument(

@@ -1,6 +1,25 @@
 indices:
+  # Query-based index example with explicit mappings
+  # MAPPING IS REQUIRED for query-based indices - index will be skipped if missing
   - index_name: "users"
     id_field: "user_id"  # Field from query results to use as OpenSearch document _id
+    # Mapping is REQUIRED - groups fields by their OpenSearch type
+    # Arrays should be mapped as 'keyword' type (OpenSearch handles arrays automatically)
+    # Objects are implicit - only nested properties need mapping using dot notation (e.g., metadata.category)
+    mapping:
+      keyword:
+        - user_id
+        - name
+        - email
+        - status
+        - tags  # Array field - still uses keyword type
+      search_as_you_type:
+        - description
+        - bio
+      long:
+        - created_at
+        - updated_at
+        - last_active
     initial_query:
       query: "MATCH (u:User) RETURN u.id as user_id, u.name as name, u.email as email, u.created_at as created_at"
       variables: {}  # Optional query parameters/variables
@@ -16,8 +35,26 @@ indices:
         variables: {}
         page_size: 1000
 
+  # Another query-based index example with nested properties
   - index_name: "products"
     id_field: "product_id"
+    # Mapping example with nested properties using dot notation
+    mapping:
+      keyword:
+        - product_id
+        - name
+        - category
+        - tags  # Array field
+        - metadata.category  # Nested property in metadata object
+        - metadata.brand  # Another nested property in metadata object
+      text:
+        - description
+        - metadata.notes  # Nested property mapped as text
+      search_as_you_type:
+        - name  # Can have same field in multiple types if needed
+      long:
+        - price
+        - price_updated
     initial_query:
       query: "MATCH (p:Product) RETURN p.id as product_id, p.name as name, p.price as price, p.category as category"
       variables: {}
@@ -29,21 +66,106 @@ indices:
           since: "2024-01-01T00:00:00Z"
         page_size: 500
 
+  # Comprehensive example with multiple nested objects and properties
+  - index_name: "orders"
+    id_field: "order_id"
+    # Example showing multiple nested objects with various property types
+    mapping:
+      keyword:
+        - order_id
+        - customer_id
+        - status
+        - shipping.address  # Nested property in shipping object
+        - shipping.city  # Another nested property in same object
+        - shipping.country
+        - shipping.postal_code
+        - billing.address  # Nested property in different object (billing)
+        - billing.city
+        - billing.country
+        - payment.method  # Nested property in payment object
+        - payment.card_type
+        - items  # Array field - still uses keyword type
+      text:
+        - notes
+        - shipping.instructions  # Nested property mapped as text
+        - billing.notes
+      search_as_you_type:
+        - customer_name
+        - shipping.recipient_name  # Nested property for search-as-you-type
+      long:
+        - total_amount
+        - shipping.cost  # Nested numeric property
+        - billing.amount
+        - created_at
+        - updated_at
+      boolean:
+        - is_express
+        - payment.is_verified  # Nested boolean property
+    initial_query:
+      query: "MATCH (o:Order) RETURN o.id as order_id, o.customer_id as customer_id, o.status as status"
+      variables: {}
+      page_size: 1000
+    update_queries:
+      - name: "update_shipping"
+        query: "MATCH (o:Order) RETURN o.id as order_id, o.shipping_address as shipping.address, o.shipping_city as shipping.city"
+        variables: {}
+        page_size: 500
+
+  # Example with content object containing nested properties
+  - index_name: "articles"
+    id_field: "article_id"
+    # Example showing content object with nested paragraph and metadata
+    mapping:
+      keyword:
+        - article_id
+        - author_id
+        - category
+        - tags  # Array field
+        - content.author  # Nested property in content object
+        - content.publish_date
+        - metadata.category  # Nested property in metadata object
+        - metadata.tags  # Array within nested object
+      text:
+        - title
+        - content.paragraph  # Nested property mapped as text (for full-text search)
+        - content.summary
+        - metadata.description
+      search_as_you_type:
+        - title  # Can search as you type on title
+        - content.title  # Nested property for search-as-you-type
+      long:
+        - views
+        - content.word_count  # Nested numeric property
+        - metadata.priority
+      boolean:
+        - is_published
+        - content.is_featured  # Nested boolean property
+        - metadata.is_archived
+    initial_query:
+      query: "MATCH (a:Article) RETURN a.id as article_id, a.title as title, a.author_id as author_id"
+      variables: {}
+      page_size: 1000
+    update_queries:
+      - name: "update_content"
+        query: "MATCH (a:Article) RETURN a.id as article_id, a.content_paragraph as content.paragraph, a.content_summary as content.summary"
+        variables: {}
+        page_size: 500
+
   # About file index example
   # Requires about_file to be configured in config.yaml
   # Mapping is optional - defaults will be used if not specified
   - index_name: "about_page"
     type: "about_file"
-    # Optional: custom mapping (if omitted, default mapping is used)
+    # Optional: custom mapping using grouped format (if omitted, default mapping is used)
     # mapping:
-    #   page:
-    #     type: keyword
-    #   title:
-    #     type: keyword
-    #   primaryContentImage:
-    #     type: text
-    #   content:
-    #     type: object
+    #   keyword:
+    #     - page
+    #   search_as_you_type:
+    #     - title
+    #   text:
+    #     - primaryContentImage
+    #   object:
+    #     - content  # Objects are implicit, but can be explicitly declared
 
   # Model indices examples
   # Requires model_files to be configured in config.yaml
@@ -51,15 +173,20 @@ indices:
   - index_name: "model_nodes"
     type: "model"
     subtype: "node"
-    # Optional: custom mapping (if omitted, default mapping for 'node' subtype is used)
+    # Optional: custom mapping using grouped format (if omitted, default mapping for 'node' subtype is used)
+    # mapping:
+    #   search_as_you_type:
+    #     - node
+    #   keyword:
+    #     - node_kw
 
   - index_name: "model_properties"
     type: "model"
     subtype: "property"
-    # Optional: custom mapping (if omitted, default mapping for 'property' subtype is used)
+    # Optional: custom mapping using grouped format (if omitted, default mapping for 'property' subtype is used)
 
   - index_name: "model_values"
     type: "model"
     subtype: "value"
-    # Optional: custom mapping (if omitted, default mapping for 'value' subtype is used)
+    # Optional: custom mapping using grouped format (if omitted, default mapping for 'value' subtype is used)
 

@@ -166,10 +166,11 @@ class Config:
         if args.index_spec_file:
             self.config['index_spec_file'] = args.index_spec_file.strip() if isinstance(args.index_spec_file, str) else args.index_spec_file
         
-        if args.clear_existing_indices is not None:
+        # Use getattr to handle argparse.SUPPRESS (attribute won't exist if flag not provided)
+        if hasattr(args, 'clear_existing_indices'):
             self.config['clear_existing_indices'] = args.clear_existing_indices
         
-        if args.allow_index_creation is not None:
+        if hasattr(args, 'allow_index_creation'):
             self.config['allow_index_creation'] = args.allow_index_creation
         
         if args.selected_indices:

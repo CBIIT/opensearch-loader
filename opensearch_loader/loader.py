@@ -262,6 +262,185 @@ class Loader:
             # Unknown subtype, return empty mapping
             return {}
     
+    def _parse_mapping(self, mapping_config: Dict[str, List[str]]) -> Dict[str, Dict[str, Any]]:
+        """Convert grouped YAML format to OpenSearch mapping format.
+        
+        Converts a mapping where fields are grouped by type into OpenSearch's
+        nested structure. Handles dot notation for nested properties.
+        
+        Args:
+            mapping_config: Dictionary mapping type names to lists of field names
+                Example: {'keyword': ['field1', 'content.title'], 'text': ['content.paragraph']}
+            
+        Returns:
+            Dictionary in OpenSearch mapping format
+                Example: {
+                    'field1': {'type': 'keyword'},
+                    'content': {
+                        'type': 'object',
+                        'properties': {
+                            'title': {'type': 'keyword'},
+                            'paragraph': {'type': 'text'}
+                        }
+                    }
+                }
+        
+        Raises:
+            ValueError: If mapping is empty or invalid
+        """
+        if not mapping_config:
+            raise ValueError("Mapping configuration cannot be empty")
+        
+        # Valid OpenSearch field types
+        valid_types = {'keyword', 'text', 'search_as_you_type', 'long', 'integer', 
+                      'double', 'float', 'boolean', 'date', 'object'}
+        
+        result = {}
+        nested_fields = {}  # Track nested properties by parent object
+        
+        # Process each type and its fields
+        for field_type, fields in mapping_config.items():
+            if not isinstance(fields, list):
+                raise ValueError(f"Fields for type '{field_type}' must be a list")
+            
+            if field_type not in valid_types:
+                raise ValueError(f"Invalid field type '{field_type}'. Valid types: {valid_types}")
+            
+            for field in fields:
+                if not isinstance(field, str) or not field.strip():
+                    raise ValueError(f"Field name must be a non-empty string, got: {field}")
+                
+                field = field.strip()
+                
+                # Check for duplicate fields
+                if field in result or any(field in nested.get('fields', set()) for nested in nested_fields.values()):
+                    raise ValueError(f"Duplicate field definition: '{field}'")
+                
+                # Check if this is a nested property (contains dot)
+                if '.' in field:
+                    # Parse nested property (e.g., "content.title" -> parent="content", prop="title")
+                    parts = field.split('.')
+                    if len(parts) != 2:
+                        raise ValueError(f"Nested properties must use single-level dot notation (e.g., 'content.title'), got: '{field}'")
+                    
+                    parent_obj, prop_name = parts[0], parts[1]
+                    
+                    # Track nested properties
+                    if parent_obj not in nested_fields:
+                        nested_fields[parent_obj] = {'fields': set(), 'properties': {}}
+                    
+                    if prop_name in nested_fields[parent_obj]['fields']:
+                        raise ValueError(f"Duplicate nested property: '{field}'")
+                    
+                    nested_fields[parent_obj]['fields'].add(prop_name)
+                    nested_fields[parent_obj]['properties'][prop_name] = {'type': field_type}
+                else:
+                    # Top-level field
+                    result[field] = {'type': field_type}
+        
+        # Add nested objects to result
+        for parent_obj, nested_info in nested_fields.items():
+            # Check if parent object conflicts with a top-level field
+            if parent_obj in result:
+                raise ValueError(f"Cannot have both top-level field '{parent_obj}' and nested properties under '{parent_obj}.*'")
+            
+            result[parent_obj] = {
+                'type': 'object',
+                'properties': nested_info['properties']
+            }
+        
+        if not result:
+            raise ValueError("Mapping must contain at least one field")
+        
+        return result
+    
+    def _validate_query_fields(self, index_name: str, documents: List[Dict[str, Any]], 
+                              mapping: Dict[str, Dict[str, Any]]) -> bool:
+        """Validate that all fields in query results have mappings defined.
+        
+        Args:
+            index_name: Name of the index being validated
+            documents: List of documents from query results (first page)
+            mapping: Parsed mapping dictionary (from _parse_mapping)
+            
+        Returns:
+            True if all fields are mapped, False otherwise
+        """
+        if not documents:
+            return True  # No documents to validate
+        
+        # Collect all field names from documents
+        all_fields = set()
+        for doc in documents:
+            all_fields.update(self._extract_field_names(doc))
+        
+        # Build a set of mapped field names (including nested properties)
+        mapped_fields = set()
+        nested_mappings = {}  # Track nested property mappings
+        
+        for field_name, field_config in mapping.items():
+            if field_config.get('type') == 'object' and 'properties' in field_config:
+                # This is a nested object - track its properties
+                parent = field_name
+                nested_mappings[parent] = set(field_config['properties'].keys())
+                # Add parent object itself (objects are implicit)
+                mapped_fields.add(parent)
+            else:
+                # Top-level field
+                mapped_fields.add(field_name)
+        
+        # Check each field
+        unmapped_fields = []
+        for field in all_fields:
+            if field in mapped_fields:
+                continue  # Field is directly mapped
+            
+            # Check if it's a nested property (e.g., "content.title")
+            if '.' in field:
+                parts = field.split('.')
+                if len(parts) == 2:
+                    parent, prop = parts[0], parts[1]
+                    if parent in nested_mappings and prop in nested_mappings[parent]:
+                        continue  # Nested property is mapped
+            
+            # Field is not mapped
+            unmapped_fields.append(field)
+        
+        if unmapped_fields:
+            logger.error(f"Index {index_name}: Fields {unmapped_fields} returned by query but not found in mapping. Skipping index.")
+            return False
+        
+        return True
+    
+    def _extract_field_names(self, doc: Dict[str, Any], prefix: str = '') -> set:
+        """Recursively extract all field names from a document, including nested fields.
+        
+        Args:
+            doc: Document dictionary
+            prefix: Prefix for nested fields (used for recursion)
+            
+        Returns:
+            Set of field names (using dot notation for nested fields)
+        """
+        field_names = set()
+        
+        for key, value in doc.items():
+            field_name = f"{prefix}.{key}" if prefix else key
+            field_names.add(field_name)
+            
+            # If value is a dict, recursively extract nested fields
+            if isinstance(value, dict):
+                nested_fields = self._extract_field_names(value, field_name)
+                field_names.update(nested_fields)
+            # If value is a list, check if it contains objects
+            elif isinstance(value, list) and value:
+                # Check first element to see if it's a dict
+                if isinstance(value[0], dict):
+                    nested_fields = self._extract_field_names(value[0], field_name)
+                    field_names.update(nested_fields)
+        
+        return field_names
+    
     def _process_about_file_index(self, index_config: Dict[str, Any]) -> int:
         """Process an about file index.
         
@@ -321,15 +500,30 @@ class Loader:
         if not id_field:
             raise ValueError("id_field is required in index configuration")
         
+        # REQUIRE mapping - skip index if missing
+        mapping_config = index_config.get('mapping')
+        if not mapping_config:
+            logger.error(f"Index {index_name} is missing required 'mapping' configuration. Skipping index.")
+            return 0
+        
+        # Parse the mapping
+        try:
+            parsed_mapping = self._parse_mapping(mapping_config)
+        except ValueError as e:
+            logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
+            return 0
+        
         # Delete index if configured
         if self.config.get_clear_existing_indices():
             logger.info(f"Deleting index (if exists): {index_name}")
             self.opensearch.delete_index(index_name)
         
-        # Create index if configured
+        # Create index with explicit mapping BEFORE processing any documents
+        # This prevents OpenSearch from auto-creating the index with dynamic mapping
+        # Use force=True to ensure we recreate the index even if it exists (in case it was auto-created)
         if self.config.get_allow_index_creation():
-            logger.info(f"Creating index (if not exists): {index_name}")
-            self.opensearch.create_index(index_name, id_field=id_field)
+            logger.info(f"Creating index (if not exists): {index_name} with explicit mapping")
+            self.opensearch.create_index(index_name, mapping=parsed_mapping, force=True)
         
         # Execute initial query
         initial_query_config = index_config.get('initial_query')
@@ -351,6 +545,7 @@ class Loader:
         
         total_documents = 0
         page_num = 0
+        first_page_validated = False
         
         try:
             # Process pages incrementally
@@ -364,6 +559,13 @@ class Loader:
                 
                 if not page_documents:
                     continue
+                
+                # Validate fields on first page only
+                if not first_page_validated:
+                    if not self._validate_query_fields(index_name, page_documents, parsed_mapping):
+                        # Validation failed - error already logged, skip entire index
+                        return 0
+                    first_page_validated = True
                 
                 # Process this page with retry logic
                 try:
@@ -385,6 +587,7 @@ class Loader:
             
             if total_documents == 0:
                 logger.warning(f"No documents returned from initial query for {index_name}")
+                # Index was already created before processing pages, so no need to create again
             else:
                 logger.info(f"{index_name}:{query_name}: Completed initial query: {total_documents} total documents processed")
         except ValueError as e:
@@ -403,7 +606,12 @@ class Loader:
         # Execute update queries
         update_queries = index_config.get('update_queries', [])
         for update_query_config in update_queries:
-            self._process_update_query(index_name, id_field, update_query_config)
+            try:
+                self._process_update_query(index_name, id_field, update_query_config, parsed_mapping)
+            except ValueError:
+                # Validation failed in update query - skip entire index
+                logger.error(f"Index {index_name}: Skipping remaining update queries due to validation failure.")
+                break
         
         # Refresh index after all update queries complete
         if update_queries:
@@ -581,13 +789,14 @@ class Loader:
         return len(documents)
     
     def _process_update_query(self, index_name: str, id_field: str,
-                             update_query_config: Dict[str, Any]):
+                             update_query_config: Dict[str, Any], mapping: Dict[str, Dict[str, Any]]):
         """Process an update query.
         
         Args:
             index_name: Name of the OpenSearch index
             id_field: Field name to use as document ID
             update_query_config: Update query configuration
+            mapping: Parsed mapping dictionary for field validation
         """
         query_name = update_query_config.get('name')
         query = update_query_config.get('query')
@@ -614,6 +823,7 @@ class Loader:
         
         total_updates = 0
         page_num = 0
+        first_page_validated = False
         
         try:
             # Process pages incrementally
@@ -627,6 +837,13 @@ class Loader:
                 
                 if not page_updates:
                     continue
+                
+                # Validate fields on first page
+                if not first_page_validated:
+                    if not self._validate_query_fields(index_name, page_updates, mapping):
+                        # Validation failed - error already logged, raise to skip entire index
+                        raise ValueError(f"Update query '{query_name}' returned unmapped fields. Skipping entire index.")
+                    first_page_validated = True
                 
                 # Process this page with retry logic
                 try:
@@ -672,7 +889,7 @@ class Loader:
                     logger.info(f"{index_name}: Completed update query: {total_updates} total updates processed")
         except ValueError as e:
             query_display = query_name if query_name else 'unnamed'
-            logger.error(f"Error executing update query '{query_display}' for {index_name}: {e}. Continuing to next query.")
+            logger.error(f"Index {index_name}: Update query '{query_display}' returned unmapped fields. Skipping entire index.")
             raise
         finally:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)

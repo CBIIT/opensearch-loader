@@ -61,14 +61,20 @@ class OpenSearchClient:
             logger.info(f"Index does not exist, skipping deletion: {index_name}")
     
     def create_index(self, index_name: str, id_field: Optional[str] = None,
-                     mapping: Optional[Dict[str, Any]] = None):
+                     mapping: Optional[Dict[str, Any]] = None, force: bool = False):
         """Create an index with basic settings.
         
         Args:
             index_name: Name of the index to create
             id_field: Optional field name to map as keyword type (used if mapping not provided)
             mapping: Optional custom mapping dictionary (overrides id_field if provided)
+            force: If True, delete existing index before creating (default: False)
         """
+        # Force delete if requested (used when we want to ensure clean recreation)
+        if force and self.index_exists(index_name):
+            logger.info(f"Force recreating index: {index_name}")
+            self.delete_index(index_name)
+        
         if not self.index_exists(index_name):
             body = {}
             
@@ -81,10 +87,12 @@ class OpenSearchClient:
             # Add mappings
             if mapping:
                 # Use provided custom mapping
+                # Disable dynamic mapping to prevent auto-detection of field types
                 body["mappings"] = {
+                    "dynamic": False,  # Disable dynamic mapping - only use explicit mappings
                     "properties": mapping
                 }
-                logger.info(f"Created index: {index_name} with custom mapping")
+                logger.info(f"Created index: {index_name} with custom mapping (dynamic mapping disabled)")
             elif id_field:
                 # Use id_field to create simple mapping
                 body["mappings"] = {
@@ -101,7 +109,7 @@ class OpenSearchClient:
             
             self.client.indices.create(index=index_name, body=body)
         else:
-            logger.info(f"Index already exists: {index_name}")
+            logger.warning(f"Index already exists: {index_name}. Skipping creation. Use force=True to recreate.")
     
     def refresh_index(self, index_name: str):
         """Refresh an index to make all operations visible.
