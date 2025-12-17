@@ -60,6 +60,7 @@ class Config:
             'OS_LOADER_SELECTED_INDICES': ('selected_indices',),
             'OS_LOADER_ABOUT_FILE': ('about_file',),
             'OS_LOADER_MODEL_FILES': ('model_files',),
+            'OS_LOADER_TEST_MODE': ('test_mode',),
         }
         
         for env_var, path in env_mapping.items():
@@ -190,6 +191,9 @@ class Config:
             elif isinstance(args.model_files, list):
                 self.config['model_files'] = [v.strip() if isinstance(v, str) else v for v in args.model_files]
         
+        # Use hasattr to handle argparse.SUPPRESS (attribute won't exist if flag not provided)
+        if hasattr(args, 'test_mode'):
+            self.config['test_mode'] = args.test_mode
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
@@ -256,6 +260,17 @@ class Config:
             return [model_files.strip()] if model_files.strip() else None
         return None
     
+    def get_test_mode(self) -> bool:
+        """Get test_mode setting.
+        
+        When enabled, each query will only run a single page of results
+        to validate that all queries are syntactically correct.
+        
+        Returns:
+            True if test_mode is enabled, False otherwise (default).
+        """
+        return self.config.get('test_mode', False)
+
 
 def load_index_spec(index_spec_file: str) -> Dict[str, Any]:
     """Load index specification from YAML file."""

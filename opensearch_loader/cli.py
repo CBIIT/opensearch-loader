@@ -51,6 +51,9 @@ def print_config(config: Config):
     selected_indices = config.get_selected_indices()
     if selected_indices:
         logger.info(f"  selected_indices: {selected_indices}")
+    
+    if config.get_test_mode():
+        logger.info(f"  test_mode: {config.get_test_mode()}")
 
 
 def parse_args():
@@ -174,6 +177,14 @@ def parse_args():
         '--model-files',
         type=str,
         help='Comma-separated list of model YAML file paths (overrides config and env)'
+    )
+    
+    # Test mode
+    parser.add_argument(
+        '--test-mode',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='Run in test mode: only process one page per query to validate queries (overrides config and env)'
     )
     
     # Other options

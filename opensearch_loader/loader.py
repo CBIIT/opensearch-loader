@@ -79,6 +79,22 @@ class Loader:
         else:
             return f"{secs}s"
     
+    def _truncate_query(self, query: str, max_length: int = 200) -> str:
+        """Truncate a query string for logging purposes.
+        
+        Args:
+            query: The query string to truncate
+            max_length: Maximum length before truncation (default: 200)
+            
+        Returns:
+            Truncated query string with '...' suffix if truncated
+        """
+        # Normalize whitespace (collapse multiple spaces/newlines to single space)
+        normalized = ' '.join(query.split())
+        if len(normalized) <= max_length:
+            return normalized
+        return normalized[:max_length] + '...'
+    
     def load(self):
         """Load data from Memgraph to OpenSearch."""
         # Load index specification
@@ -451,8 +467,18 @@ class Loader:
             Number of documents loaded
         """
         index_name = index_config.get('index_name')
-        # Use provided mapping or default
-        mapping = index_config.get('mapping') or self._get_default_about_mapping()
+        
+        # Use provided mapping (parsed) or default
+        mapping_config = index_config.get('mapping')
+        if mapping_config:
+            try:
+                mapping = self._parse_mapping(mapping_config)
+            except ValueError as e:
+                logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
+                return 0
+        else:
+            mapping = self._get_default_about_mapping()
+        
         about_file = self.config.get_about_file()
         
         if not about_file:
@@ -481,8 +507,16 @@ class Loader:
             logger.warning(f'"subtype" not specified for model index {index_name}, will not be loaded!')
             return 0
         
-        # Use provided mapping or auto-generate based on subtype
-        mapping = index_config.get('mapping') or self._get_default_model_mapping(subtype)
+        # Use provided mapping (parsed) or auto-generate based on subtype
+        mapping_config = index_config.get('mapping')
+        if mapping_config:
+            try:
+                mapping = self._parse_mapping(mapping_config)
+            except ValueError as e:
+                logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
+                return 0
+        else:
+            mapping = self._get_default_model_mapping(subtype)
         
         return self.load_model(index_name, mapping, subtype)
     
@@ -551,9 +585,12 @@ class Loader:
             # Process pages incrementally
             # Note: Query execution time is tracked inside execute_paginated_query
             # and will be available in self.memgraph.last_query_time after the loop
+            # Note: Initial queries always run completely (test_mode=False), even in test mode.
+            # Only update queries are limited to one page in test mode.
             for page_documents in self.memgraph.execute_paginated_query(
                 query, parameters=variables, page_size=page_size,
-                index_name=index_name, query_name=query_name
+                index_name=index_name, query_name=query_name,
+                test_mode=False
             ):
                 page_num += 1
                 
@@ -582,7 +619,8 @@ class Loader:
                         total_documents += len(page_documents)
                         logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_documents)} documents (total: {total_documents})")
                     except Exception as retry_error:
-                        logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Skipping entire index.")
+                        truncated_query = self._truncate_query(query)
+                        logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
                         raise
             
             if total_documents == 0:
@@ -591,7 +629,8 @@ class Loader:
             else:
                 logger.info(f"{index_name}:{query_name}: Completed initial query: {total_documents} total documents processed")
         except ValueError as e:
-            logger.error(f"Error executing initial query for {index_name}: {e}. Skipping to next query.")
+            truncated_query = self._truncate_query(query)
+            logger.error(f"Error executing initial query for {index_name}: {e}. Query: {truncated_query}. Skipping to next query.")
             raise
         finally:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
@@ -825,13 +864,17 @@ class Loader:
         page_num = 0
         first_page_validated = False
         
+        # Get test_mode setting
+        test_mode = self.config.get_test_mode()
+        
         try:
             # Process pages incrementally
             # Note: Query execution time is tracked inside execute_paginated_query
             # and will be available in self.memgraph.last_query_time after the loop
             for page_updates in self.memgraph.execute_paginated_query(
                 query, parameters=variables, page_size=page_size,
-                index_name=index_name, query_name=query_name
+                index_name=index_name, query_name=query_name,
+                test_mode=test_mode
             ):
                 page_num += 1
                 
@@ -874,7 +917,8 @@ class Loader:
                             logger.info(f"{index_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
                     except Exception as retry_error:
                         query_display = query_name if query_name else 'unnamed'
-                        logger.error(f"Retry failed for page {page_num} for update query '{query_display}' in {index_name}: {retry_error}. Skipping entire index.")
+                        truncated_query = self._truncate_query(query)
+                        logger.error(f"Retry failed for page {page_num} for update query '{query_display}' in {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
                         raise
             
             if total_updates == 0:
@@ -889,7 +933,8 @@ class Loader:
                     logger.info(f"{index_name}: Completed update query: {total_updates} total updates processed")
         except ValueError as e:
             query_display = query_name if query_name else 'unnamed'
-            logger.error(f"Index {index_name}: Update query '{query_display}' returned unmapped fields. Skipping entire index.")
+            truncated_query = self._truncate_query(query)
+            logger.error(f"Index {index_name}: Update query '{query_display}' returned unmapped fields. Query: {truncated_query}. Skipping entire index.")
             raise
         finally:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)

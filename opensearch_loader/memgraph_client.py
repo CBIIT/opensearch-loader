@@ -127,7 +127,8 @@ class MemgraphClient:
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
                                page_size: int = 10000, index_name: Optional[str] = None,
-                               query_name: Optional[str] = None) -> Iterator[List[Dict[str, Any]]]:
+                               query_name: Optional[str] = None,
+                               test_mode: bool = False) -> Iterator[List[Dict[str, Any]]]:
         """Execute a query with pagination, yielding pages one at a time.
         
         Also tracks total Memgraph query execution time (excluding OpenSearch operations)
@@ -139,6 +140,7 @@ class MemgraphClient:
             page_size: Number of results per page (default: 10000)
             index_name: Optional index name for logging prefix
             query_name: Optional query name for logging prefix
+            test_mode: If True, only process the first page to validate the query
             
         Yields:
             List of result dictionaries for each page
@@ -172,6 +174,16 @@ class MemgraphClient:
             else:
                 logger.info(f"Memgraph query returned {len(page_results)} records")
             yield page_results
+            
+            # In test mode, only process the first page to validate the query
+            if test_mode:
+                if index_name and query_name:
+                    logger.info(f"{index_name}:{query_name}: Test mode - stopping after first page")
+                elif index_name:
+                    logger.info(f"{index_name}: Test mode - stopping after first page")
+                else:
+                    logger.info("Test mode - stopping after first page")
+                break
             
             # If we got fewer results than page_size, we're done
             if len(page_results) < page_size:
