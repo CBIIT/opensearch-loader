@@ -11,7 +11,6 @@ from prefect import flow
 from loader import Loader
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
-from enum import Enum
 
 MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_endpoint"
@@ -168,22 +167,16 @@ def repo_download(repo, version, logger):
     logger.info(f"Finished cloning the data model repository from {repo} to {repo_folder}")
     return repo_folder
 
-def build_enum(value_list):
-    return Enum(
-        "Environment",
-        {v.upper(): v for v in value_list},
-        type=str
-    )
 
 config_file = DROP_DOWN_CONFIG
 with open(config_file, 'r') as file:
     config_drop_list = yaml.safe_load(file)
 model_repo_url = config_drop_list.get(MODEL_REPO_URL)
 monorepo_url = config_drop_list.get(MONOREPO_URL)
-model_branch_choices = build_enum(get_github_branches(model_repo_url))
-monorepo_branch_choices = build_enum(get_github_branches(monorepo_url))
+model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
+monorepo_branch_choices = Literal[tuple(get_github_branches(monorepo_url))]
 env = config_drop_list[ENVIRONMENTS].keys()
-environment_choices = build_enum(list(env))
+environment_choices = Literal[tuple(list(env))]
 @flow(name="CRDC Data Hub OpenSearch Loader", log_prints=True)
 def opensearch_loader_prefect(
     environment: environment_choices, # type: ignore
