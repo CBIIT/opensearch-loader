@@ -17,7 +17,7 @@ MEMGRAPH_ENDPOINT = "memgraph_endpoint"
 MEMGRAPH_PASSWORD = "memgraph_password"
 MODEL_REPO_URL = "model_repo_url"
 MODEL_DESC = "model-desc"
-DROP_DOWN_CONFIG = "prefect_drop_down_config_opensearch_loader.yaml"
+DROP_DOWN_CONFIG = "prefect/prefect_drop_down_config_opensearch_loader.yaml"
 MONOREPO_URL = "monorepo_url"
 ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
@@ -185,7 +185,6 @@ def opensearch_loader_prefect(
     about_file,
     indices_file,
     selected_indices
-
 ):
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
