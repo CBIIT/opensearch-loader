@@ -219,7 +219,7 @@ def opensearch_loader_prefect(
         indices_file=indices_file_path,
         about_file=about_file_path,
         model_files=model_files,
-        selected_indices=None
+        selected_indices=selected_indices
     )
     print_config(config)
     loader = Loader(config)
