@@ -42,3 +42,6 @@ deployments:
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
+      job_variables:
+        env:
+          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader"
