@@ -2,7 +2,7 @@
 
 import logging
 from typing import List, Dict, Any, Optional
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
@@ -40,9 +40,11 @@ class OpenSearchClient:
         self.client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
+            port=443,
             use_ssl=use_ssl,
             verify_certs=verify_certs,
-            ssl_show_warn=False
+            ssl_show_warn=False,
+            connection_class=RequestsHttpConnection
         )
         logger.info(f"Connected to OpenSearch at {host}")
     
