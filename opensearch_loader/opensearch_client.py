@@ -4,6 +4,8 @@ import logging
 from typing import List, Dict, Any, Optional
 from opensearchpy import OpenSearch
 from opensearchpy.helpers import bulk
+from requests_aws4auth import AWS4Auth
+from botocore.session import Session
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -27,6 +29,13 @@ class OpenSearchClient:
         hosts = [host]
         
         http_auth = (username, password) if username and password else None
+
+        if 'amazonaws.com' in host:
+            http_auth = AWS4Auth(
+                refreshable_credentials=Session().get_credentials(),
+                region='us-east-1',
+                service='es'
+            )
         
         self.client = OpenSearch(
             hosts=hosts,
