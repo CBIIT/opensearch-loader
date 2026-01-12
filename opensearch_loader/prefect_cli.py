@@ -6,9 +6,9 @@ import requests
 import subprocess
 import prefect.variables as Variables
 from typing import Literal, Optional, Dict, Any, List
-from cli import print_config, setup_logging
+from .cli import print_config, setup_logging
 from prefect import flow
-from loader import Loader
+from .loader import Loader
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
 
