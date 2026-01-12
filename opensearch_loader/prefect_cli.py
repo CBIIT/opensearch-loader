@@ -6,7 +6,7 @@ import requests
 import subprocess
 import prefect.variables as Variables
 from typing import Literal, Optional, Dict, Any, List
-from .cli import print_config, setup_logging
+from .cli import setup_logging
 from prefect import flow
 from .loader import Loader
 from bento.common.secret_manager import get_secret
@@ -167,6 +167,34 @@ def repo_download(repo, version, logger):
     logger.info(f"Finished cloning the data model repository from {repo} to {repo_folder}")
     return repo_folder
 
+def print_config(config: Config, logger):
+    """Print configuration variables excluding connection information.
+    
+    Args:
+        config: Configuration object
+    """
+    
+    # Fields to exclude from memgraph and opensearch
+    excluded_memgraph = {'host', 'port', 'username', 'password'}
+    excluded_opensearch = {'host', 'use_ssl', 'verify_certs', 'username', 'password'}
+    
+    # Print non-connection config values
+    if config.get('index_spec_file'):
+        logger.info(f"  index_spec_file: {config.get('index_spec_file')}")
+    
+    if config.get('clear_existing_indices') is not None:
+        logger.info(f"  clear_existing_indices: {config.get('clear_existing_indices')}")
+    
+    if config.get('allow_index_creation') is not None:
+        logger.info(f"  allow_index_creation: {config.get('allow_index_creation')}")
+    
+    selected_indices = config.get_selected_indices()
+    if selected_indices:
+        logger.info(f"  selected_indices: {selected_indices}")
+    
+    if config.get_test_mode():
+        logger.info(f"  test_mode: {config.get_test_mode()}")
+
 
 config_file = DROP_DOWN_CONFIG
 with open(config_file, 'r') as file:
@@ -213,7 +241,7 @@ def opensearch_loader_prefect(
         model_files=model_files,
         selected_indices=selected_indices
     )
-    print_config(config)
+    print_config(config, logger)
     loader = Loader(config)
     try:
         loader.load()
