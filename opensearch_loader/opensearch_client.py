@@ -40,7 +40,6 @@ class OpenSearchClient:
         self.client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
-            port=443,
             use_ssl=use_ssl,
             verify_certs=verify_certs,
             ssl_show_warn=False,
