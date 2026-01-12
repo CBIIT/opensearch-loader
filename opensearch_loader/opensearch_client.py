@@ -27,7 +27,7 @@ class OpenSearchClient:
         """
         # Normalize host to a list for OpenSearch library
         hosts = [host]
-        
+        timeout_seconds = 60
         http_auth = (username, password) if username and password else None
 
         if 'amazonaws.com' in host:
@@ -44,7 +44,8 @@ class OpenSearchClient:
             use_ssl=use_ssl,
             verify_certs=verify_certs,
             ssl_show_warn=False,
-            connection_class=RequestsHttpConnection
+            connection_class=RequestsHttpConnection,
+            timeout=timeout_seconds
         )
         logger.info(f"Connected to OpenSearch at {host}")
     
