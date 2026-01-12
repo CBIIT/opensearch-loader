@@ -165,9 +165,6 @@ def repo_download(repo, version, logger):
     repo_folder = os.path.splitext(os.path.basename(repo))[0]
     subprocess.run(['git', '-C', repo_folder, 'checkout', version])
     logger.info(f"Finished cloning the data model repository from {repo} to {repo_folder}")
-    entries = os.listdir(repo_folder)
-    for entry in entries:
-        print(entry)
     return repo_folder
 
 def print_config(config: Config, logger):

@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from opensearchpy import OpenSearch
 from opensearchpy.helpers import bulk
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("OpenSearchLoader")
 
 
 class OpenSearchClient:
