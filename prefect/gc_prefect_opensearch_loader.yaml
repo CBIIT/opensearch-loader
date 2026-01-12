@@ -19,6 +19,8 @@ pull:
       repository: https://github.com/CBIIT/opensearch-loader.git
       branch: prefect
       include_submodules: True
+  - prefect.deployments.steps.set_working_directory:
+      directory: "/opt/prefect/opensearch-loader-prefect"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
