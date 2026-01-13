@@ -6,7 +6,7 @@ import logging
 from typing import Dict, Any, List, Set, Optional
 from .props import Props
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("OpenSearchLoader")
 
 # Constants
 NODES = 'Nodes'

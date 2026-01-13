@@ -216,7 +216,7 @@ def opensearch_loader_prefect(
     loader = Loader(config)
     try:
         loader.load()
-        logger.info("Data loading completed successfully")
+        logger.info("Data loading completed")
     finally:
         loader.close()
     
