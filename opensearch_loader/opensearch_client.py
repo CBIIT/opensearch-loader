@@ -7,7 +7,7 @@ from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
 
-logger = logging.getLogger("OpenSearchLoader")
+logger = logging.getLogger(__name__)
 
 
 class OpenSearchClient:

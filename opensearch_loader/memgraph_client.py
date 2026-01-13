@@ -6,7 +6,7 @@ import time
 from typing import List, Dict, Any, Optional, Iterator
 from neo4j import GraphDatabase
 
-logger = logging.getLogger("OpenSearchLoader")
+logger = logging.getLogger(__name__)
 
 # Cypher keywords that indicate write operations
 WRITE_KEYWORDS = {

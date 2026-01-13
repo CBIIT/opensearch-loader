@@ -13,7 +13,7 @@ from .config import Config, load_index_spec
 from .memgraph_client import MemgraphClient
 from .opensearch_client import OpenSearchClient
 
-logger = logging.getLogger("OpenSearchLoader")
+logger = logging.getLogger(__name__)
 
 
 class Loader:

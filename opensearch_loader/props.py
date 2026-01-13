@@ -2,7 +2,7 @@
 
 import logging
 
-logger = logging.getLogger("OpenSearchLoader")
+logger = logging.getLogger(__name__)
 
 # Default type mapping
 DEFAULT_TYPE_MAPPING = {
