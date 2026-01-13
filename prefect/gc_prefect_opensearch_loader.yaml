@@ -44,4 +44,4 @@ deployments:
       work_queue_name: default
       job_variables:
         env:
-          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader, opensearch_loader.opensearch_client, opensearch_loader.props, opensearch_loader.schema, opensearch_loader.memgraph_client, opensearch_loader.loader, opensearch_loader.config"
+          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader, opensearch_loader.opensearch_client, opensearch_loader.props, opensearch_loader.schema, opensearch_loader.memgraph_client, opensearch_loader.loader, opensearch_loader.config, opensearch_loader.cli, opensearch, opensearchpy, elasticsearch, urllib3"
