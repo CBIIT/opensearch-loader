@@ -1,0 +1,47 @@
+# Welcome to your prefect.yaml file! You can use this file for storing and managing
+# configuration for deploying your flows. We recommend committing this file to source
+# control along with your flow code.
+
+# Generic metadata about this project
+name: CRDC Open Search Loader
+prefect-version: null
+
+# build section allows you to manage and build docker images
+build: null
+
+# push section allows you to manage if and how this project is uploaded to remote locations
+push: null
+
+# pull section allows you to provide instructions for cloning this project in remote locations
+pull:
+  - prefect.deployments.steps.git_clone:
+      #id: clone-step
+      repository: https://github.com/CBIIT/opensearch-loader.git
+      branch: prefect
+      include_submodules: True
+  - prefect.deployments.steps.set_working_directory:
+      directory: "/opt/prefect/opensearch-loader-prefect"
+  - prefect.deployments.steps.pip_install_requirements:
+      requirements_file: requirements.txt
+      directory: "{{ clone-step.directory }}"
+      stream_output: False
+
+# the deployments section allows you to provide configuration for deploying flows
+deployments:
+  - name: gc-data-hub-new-opensearch-loader
+    version: null
+    tags: []
+    description: null
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
+    parameters:
+      about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
+      indices_file: "backend/src/main/resources/yaml/indices.yaml"
+      selected_indices: []
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
+      job_variables:
+        env:
+          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader"

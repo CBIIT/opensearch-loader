@@ -2,10 +2,12 @@
 
 import logging
 from typing import List, Dict, Any, Optional
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
+from requests_aws4auth import AWS4Auth
+from botocore.session import Session
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("OpenSearchLoader")
 
 
 class OpenSearchClient:
@@ -25,15 +27,25 @@ class OpenSearchClient:
         """
         # Normalize host to a list for OpenSearch library
         hosts = [host]
-        
+        timeout_seconds = 60
         http_auth = (username, password) if username and password else None
+
+        if 'amazonaws.com' in host:
+            http_auth = AWS4Auth(
+                refreshable_credentials=Session().get_credentials(),
+                region='us-east-1',
+                service='es'
+            )
         
         self.client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
+            port=443,
             use_ssl=use_ssl,
             verify_certs=verify_certs,
-            ssl_show_warn=False
+            ssl_show_warn=False,
+            connection_class=RequestsHttpConnection,
+            timeout=timeout_seconds
         )
         logger.info(f"Connected to OpenSearch at {host}")
     
