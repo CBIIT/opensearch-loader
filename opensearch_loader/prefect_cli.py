@@ -19,6 +19,8 @@ MODEL_REPO_URL = "model_repo_url"
 MODEL_DESC = "model-desc"
 DROP_DOWN_CONFIG = "prefect/prefect_drop_down_config_opensearch_loader.yaml"
 MONOREPO_URL = "monorepo_url"
+FRONTEND_URL = "frontend_url"
+BACKEND_URL = "backend_url"
 ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
@@ -172,8 +174,12 @@ with open(config_file, 'r') as file:
     config_drop_list = yaml.safe_load(file)
 model_repo_url = config_drop_list.get(MODEL_REPO_URL)
 monorepo_url = config_drop_list.get(MONOREPO_URL)
+frontend_url = config_drop_list.get(FRONTEND_URL)
+backend_url = config_drop_list.get(BACKEND_URL)
 model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
 monorepo_branch_choices = Literal[tuple(get_github_branches(monorepo_url))]
+frontend_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
+backend_branch_choices = Literal[tuple(get_github_branches(backend_url))]
 env = config_drop_list[ENVIRONMENTS].keys()
 environment_choices = Literal[tuple(list(env))]
 @flow(name="CRDC Data Hub OpenSearch Loader", log_prints=True)
@@ -192,6 +198,8 @@ def opensearch_loader_prefect(
     model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
     model_files = model_yaml_files + model_yml_files
     monorepo = repo_download(monorepo_url, monorepo_branch_choices, logger)
+    frontend = repo_download(frontend_url, frontend_branch_choices, logger)
+    backend = repo_download(backend_url, backend_branch_choices, logger)
     about_file_path = os.path.join(monorepo, about_file)
     indices_file_path = os.path.join(monorepo, indices_file)
     memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
