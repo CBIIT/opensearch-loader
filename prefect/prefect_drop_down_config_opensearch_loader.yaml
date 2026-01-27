@@ -1,6 +1,6 @@
 environments:
   dev_cdk: "ctdc_memgraph_secret_name_dev_cdk"
-  dev2_cdk: "ctdc_memgraph_secret_name_dev2_cdk"
+  dev2_cdk: "ctdc_memgraph_secret_name_dev2"
 model_repo_url: "https://github.com/CBIIT/ctdc-model.git"
 backend_url: "https://github.com/CBIIT/crdc-ctdc-backend"
 frontend_url: "https://github.com/CBIIT/crdc-ctdc-ui"
