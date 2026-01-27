@@ -184,7 +184,8 @@ environment_choices = Literal[tuple(list(env))]
 def opensearch_loader_prefect(
     environment: environment_choices, # type: ignore
     model_branch: model_branch_choices, # type: ignore
-    monorepo_branch_choices: monorepo_branch_choices, # type: ignore
+    frontend_branch_choices: frontend_branch_choices, # type: ignore
+    backend_branch_choices: backend_branch_choices, # type: ignore
     about_file,
     indices_file,
     selected_indices

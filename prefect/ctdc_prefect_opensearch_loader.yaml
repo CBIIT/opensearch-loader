@@ -17,10 +17,10 @@ pull:
   - prefect.deployments.steps.git_clone:
       #id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-      branch: prefect
+      branch: CTDC-Opensearch-Loader
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
-      directory: "/opt/prefect/opensearch-loader-prefect"
+      directory: "/opt/prefect/opensearch-loader-CTDC-Opensearch-Loader"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
