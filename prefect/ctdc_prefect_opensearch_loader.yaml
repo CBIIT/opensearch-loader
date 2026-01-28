@@ -37,7 +37,7 @@ deployments:
     entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
     parameters:
       about_file: "/src/content/dev/aboutPagesContent.yaml"
-      indices_file: "/src/main/resources/yaml/indices.yaml"
+      indices_file: "/src/main/resources/yaml/es_indices_ctdc.yml"
       selected_indices: []
     work_pool:
       name: crdc-ctdc-16gb-prefect-3.4.18-python3.12
