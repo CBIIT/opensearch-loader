@@ -192,7 +192,6 @@ class Loader:
                     'duration': index_duration,
                     'error': True
                 })
-                raise e
                 continue
         
         total_time = time.time() - start_time
