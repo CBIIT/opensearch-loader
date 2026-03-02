@@ -313,6 +313,7 @@ class Loader:
         
         result = {}
         nested_fields = {}  # Track nested properties by parent object
+        all_field_paths = set()  # All defined paths (top-level and "parent.prop") for duplicate detection
         
         # Process each type and its fields
         for field_type, fields in mapping_config.items():
@@ -328,9 +329,10 @@ class Loader:
                 
                 field = field.strip()
                 
-                # Check for duplicate fields
-                if field in result or any(field in nested.get('fields', set()) for nested in nested_fields.values()):
+                # Check for duplicate fields (same path defined twice, e.g. under two types)
+                if field in all_field_paths:
                     raise ValueError(f"Duplicate field definition: '{field}'")
+                all_field_paths.add(field)
                 
                 # Check if this is a nested property (contains dot)
                 if '.' in field:
