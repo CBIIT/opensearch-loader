@@ -200,7 +200,7 @@ def opensearch_loader_prefect(
     backend = repo_download(backend_url, backend_branch_choices, logger)
     about_file_path = os.path.join(frontend, about_file)
     indices_file_path = os.path.join(frontend, indices_file)
-    about_file_path = os.path.join(backend, about_file)
+    # about_file_path = os.path.join(backend, about_file)
     indices_file_path = os.path.join(backend, indices_file)
     memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
     secret = get_secret(memgraph_secret_name)
