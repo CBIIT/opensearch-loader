@@ -176,7 +176,7 @@ model_repo_url = config_drop_list.get(MODEL_REPO_URL)
 frontend_url = config_drop_list.get(FRONTEND_URL)
 backend_url = config_drop_list.get(BACKEND_URL)
 model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
-frontend_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
+static_content_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
 backend_branch_choices = Literal[tuple(get_github_branches(backend_url))]
 env = config_drop_list[ENVIRONMENTS].keys()
 environment_choices = Literal[tuple(list(env))]
@@ -184,7 +184,7 @@ environment_choices = Literal[tuple(list(env))]
 def opensearch_loader_prefect(
     environment: environment_choices, # type: ignore
     model_branch: model_branch_choices, # type: ignore
-    frontend_branch_choices: frontend_branch_choices, # type: ignore
+    static_content_branch_choices: static_content_branch_choices, # type: ignore
     backend_branch_choices: backend_branch_choices, # type: ignore
     about_file,
     indices_file,
@@ -196,7 +196,7 @@ def opensearch_loader_prefect(
     model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
     model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
     model_files = model_yaml_files + model_yml_files
-    frontend = repo_download(frontend_url, frontend_branch_choices, logger)
+    frontend = repo_download(frontend_url, static_content_branch_choices, logger)
     backend = repo_download(backend_url, backend_branch_choices, logger)
     about_file_path = os.path.join(frontend, about_file)
     indices_file_path = os.path.join(frontend, indices_file)
