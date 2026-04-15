@@ -204,7 +204,7 @@ def opensearch_loader_prefect(
     indices_file_path = os.path.join(backend, indices_file)
     memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
     secret = get_secret(memgraph_secret_name)
-    opensearch_host = secret[ES_HOST]
+    opensearch_host = "https://" + secret[ES_HOST] + "/"
     memgraph_endpoint_host = secret[MEMGRAPH_ENDPOINT]
     memgraph_user = secret[MEMGRAPH_USER]
     memgraph_password = secret[MEMGRAPH_PASSWORD]

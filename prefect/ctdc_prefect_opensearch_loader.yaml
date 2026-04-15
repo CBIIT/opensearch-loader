@@ -40,7 +40,7 @@ deployments:
       indices_file: "src/main/resources/yaml/es_indices_ctdc.yml"
       selected_indices: []
     work_pool:
-      name: crdc-ctdc-16gb-prefect-3.4.18-python3.12
+      name: crdc-curation-16gb-prefect-3.2.14-python3.9
       work_queue_name: default
       job_variables:
         env:
