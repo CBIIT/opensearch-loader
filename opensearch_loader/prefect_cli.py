@@ -4,7 +4,6 @@ import yaml
 import logging
 import requests
 import subprocess
-import prefect.variables as Variables
 from typing import Literal, Optional, Dict, Any, List
 from .cli import setup_logging, print_config
 from prefect import flow
@@ -21,6 +20,7 @@ DROP_DOWN_CONFIG = "prefect/prefect_drop_down_config_opensearch_loader.yaml"
 MONOREPO_URL = "monorepo_url"
 FRONTEND_URL = "frontend_url"
 BACKEND_URL = "backend_url"
+MEMGRAPH_LOCATION = "memgraph_location"
 ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
@@ -175,6 +175,7 @@ with open(config_file, 'r') as file:
 model_repo_url = config_drop_list.get(MODEL_REPO_URL)
 frontend_url = config_drop_list.get(FRONTEND_URL)
 backend_url = config_drop_list.get(BACKEND_URL)
+memgraph_location = config_drop_list.get(MEMGRAPH_LOCATION)
 model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
 static_content_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
 backend_branch_choices = Literal[tuple(get_github_branches(backend_url))]
@@ -202,7 +203,7 @@ def opensearch_loader_prefect(
     indices_file_path = os.path.join(frontend, indices_file)
     # about_file_path = os.path.join(backend, about_file)
     indices_file_path = os.path.join(backend, indices_file)
-    memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
+    memgraph_secret_name = memgraph_location
     secret = get_secret(memgraph_secret_name)
     opensearch_host = "https://" + secret[ES_HOST] + "/"
     memgraph_endpoint_host = secret[MEMGRAPH_ENDPOINT]
