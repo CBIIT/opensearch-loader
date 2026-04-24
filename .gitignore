@@ -27,6 +27,10 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Editor
+.devcontainer/
+.vscode/
+
 # PyInstaller
 *.manifest
 *.spec
@@ -127,5 +131,4 @@ config.yaml
 indices.yaml
 *.pyc
 .DS_Store
-.vscode/
 logs/
