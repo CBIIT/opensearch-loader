@@ -4,7 +4,6 @@ import yaml
 import logging
 import requests
 import subprocess
-import prefect.variables as Variables
 from typing import Literal, Optional, Dict, Any, List
 from .cli import setup_logging, print_config
 from prefect import flow
@@ -17,11 +16,11 @@ MEMGRAPH_ENDPOINT = "memgraph_endpoint"
 MEMGRAPH_PASSWORD = "memgraph_password"
 MODEL_REPO_URL = "model_repo_url"
 MODEL_DESC = "model-desc"
-DROP_DOWN_CONFIG = "prefect/prefect_drop_down_config_opensearch_loader.yaml"
+MEMGRAPH_SECRET_NAME = "ctdc-memgraph"
+OPENSEARCH_SECRET_NAME = "ctdc-opensearch"
 MONOREPO_URL = "monorepo_url"
 FRONTEND_URL = "frontend_url"
 BACKEND_URL = "backend_url"
-ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
 log = get_logger('OpenSearchLoader')
@@ -178,11 +177,9 @@ backend_url = config_drop_list.get(BACKEND_URL)
 model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
 static_content_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
 backend_branch_choices = Literal[tuple(get_github_branches(backend_url))]
-env = config_drop_list[ENVIRONMENTS].keys()
-environment_choices = Literal[tuple(list(env))]
+
 @flow(name="CRDC Data Hub OpenSearch Loader", log_prints=True)
 def opensearch_loader_prefect(
-    environment: environment_choices, # type: ignore
     model_branch: model_branch_choices, # type: ignore
     static_content_branch_choices: static_content_branch_choices, # type: ignore
     backend_branch_choices: backend_branch_choices, # type: ignore
@@ -202,12 +199,15 @@ def opensearch_loader_prefect(
     indices_file_path = os.path.join(frontend, indices_file)
     # about_file_path = os.path.join(backend, about_file)
     indices_file_path = os.path.join(backend, indices_file)
-    memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
-    secret = get_secret(memgraph_secret_name)
-    opensearch_host = "https://" + secret[ES_HOST] + "/"
-    memgraph_endpoint_host = secret[MEMGRAPH_ENDPOINT]
-    memgraph_user = secret[MEMGRAPH_USER]
-    memgraph_password = secret[MEMGRAPH_PASSWORD]
+    
+    # Retrieve Memgraph and OpenSearch secrets
+    memgraph_secret = get_secret(MEMGRAPH_SECRET_NAME)
+    opensearch_secret = get_secret(OPENSEARCH_SECRET_NAME)
+    
+    opensearch_host = "https://" + opensearch_secret[ES_HOST] + "/"
+    memgraph_endpoint_host = memgraph_secret[MEMGRAPH_ENDPOINT]
+    memgraph_user = memgraph_secret[MEMGRAPH_USER]
+    memgraph_password = memgraph_secret[MEMGRAPH_PASSWORD]
     memgraph_port = MEMGRAPH_PORT
     config = Config(
         memgraph_host=memgraph_endpoint_host,
