@@ -14,13 +14,9 @@ from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
 MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_endpoint"
 MEMGRAPH_PASSWORD = "memgraph_password"
-MODEL_REPO_URL = "model_repo_url"
 MODEL_DESC = "model-desc"
 MEMGRAPH_SECRET_NAME = "ctdc-memgraph"
 OPENSEARCH_SECRET_NAME = "ctdc-opensearch"
-MONOREPO_URL = "monorepo_url"
-FRONTEND_URL = "frontend_url"
-BACKEND_URL = "backend_url"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
 log = get_logger('OpenSearchLoader')
@@ -168,12 +164,9 @@ def repo_download(repo, version, logger):
     logger.info(f"Finished cloning the data model repository from {repo} to {repo_folder}")
     return repo_folder
 
-config_file = DROP_DOWN_CONFIG
-with open(config_file, 'r') as file:
-    config_drop_list = yaml.safe_load(file)
-model_repo_url = config_drop_list.get(MODEL_REPO_URL)
-frontend_url = config_drop_list.get(FRONTEND_URL)
-backend_url = config_drop_list.get(BACKEND_URL)
+model_repo_url = "https://github.com/CBIIT/ctdc-model.git"
+frontend_url = "https://github.com/CBIIT/bento-ctdc-static-content.git"
+backend_url = "https://github.com/CBIIT/crdc-ctdc-backend"
 model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
 static_content_branch_choices = Literal[tuple(get_github_branches(frontend_url))]
 backend_branch_choices = Literal[tuple(get_github_branches(backend_url))]
