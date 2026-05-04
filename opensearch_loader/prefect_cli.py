@@ -193,9 +193,34 @@ def opensearch_loader_prefect(
     # about_file_path = os.path.join(backend, about_file)
     indices_file_path = os.path.join(backend, indices_file)
     
-    # Retrieve Memgraph and OpenSearch secrets
-    memgraph_secret = get_secret(MEMGRAPH_SECRET_NAME)
-    opensearch_secret = get_secret(OPENSEARCH_SECRET_NAME)
+    # Retrieve Memgraph and OpenSearch secrets with detailed error handling
+    try:
+        logger.info(f"Attempting to retrieve Memgraph secret: {MEMGRAPH_SECRET_NAME}")
+        memgraph_secret = get_secret(MEMGRAPH_SECRET_NAME)
+        logger.info(f"Successfully retrieved Memgraph secret: {MEMGRAPH_SECRET_NAME}")
+        logger.debug(f"Memgraph secret keys: {list(memgraph_secret.keys()) if isinstance(memgraph_secret, dict) else 'N/A'}")
+        # Verify required keys exist
+        required_keys = [MEMGRAPH_ENDPOINT, MEMGRAPH_USER, MEMGRAPH_PASSWORD]
+        missing_keys = [k for k in required_keys if k not in memgraph_secret]
+        if missing_keys:
+            logger.error(f"Memgraph secret missing required keys: {missing_keys}. Available keys: {list(memgraph_secret.keys())}")
+    except Exception as e:
+        logger.error(f"Failed to retrieve Memgraph secret '{MEMGRAPH_SECRET_NAME}': {type(e).__name__}: {str(e)}")
+        raise
+    
+    try:
+        logger.info(f"Attempting to retrieve OpenSearch secret: {OPENSEARCH_SECRET_NAME}")
+        opensearch_secret = get_secret(OPENSEARCH_SECRET_NAME)
+        logger.info(f"Successfully retrieved OpenSearch secret: {OPENSEARCH_SECRET_NAME}")
+        logger.debug(f"OpenSearch secret keys: {list(opensearch_secret.keys()) if isinstance(opensearch_secret, dict) else 'N/A'}")
+        # Verify required keys exist
+        required_keys = [ES_HOST]
+        missing_keys = [k for k in required_keys if k not in opensearch_secret]
+        if missing_keys:
+            logger.error(f"OpenSearch secret missing required keys: {missing_keys}. Available keys: {list(opensearch_secret.keys())}")
+    except Exception as e:
+        logger.error(f"Failed to retrieve OpenSearch secret '{OPENSEARCH_SECRET_NAME}': {type(e).__name__}: {str(e)}")
+        raise
     
     opensearch_host = "https://" + opensearch_secret[ES_HOST] + "/"
     memgraph_endpoint_host = memgraph_secret[MEMGRAPH_ENDPOINT]
