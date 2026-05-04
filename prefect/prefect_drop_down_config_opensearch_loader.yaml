@@ -1,5 +1,5 @@
 environment_memgraph: "ctdc-memgraph"
-environment_opensearch: "ctdc-opensearch"
+environment_opensearch: "ctdc_memgraph_secret_name_dev2"
 model_repo_url: "https://github.com/CBIIT/ctdc-model.git"
 backend_url: "https://github.com/CBIIT/crdc-ctdc-backend"
 frontend_url: "https://github.com/CBIIT/bento-ctdc-static-content.git"
