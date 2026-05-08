@@ -7,6 +7,7 @@ import subprocess
 from typing import Literal, Optional, Dict, Any, List
 from .cli import setup_logging, print_config
 from prefect import flow
+from prefect.variables import Variable
 from .loader import Loader
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
@@ -15,8 +16,8 @@ MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_endpoint"
 MEMGRAPH_PASSWORD = "memgraph_password"
 MODEL_DESC = "model-desc"
-MEMGRAPH_SECRET_NAME = "ctdc-memgraph"
-OPENSEARCH_SECRET_NAME = "ctdc-opensearch"
+MEMGRAPH_SECRET_NAME = Variable.get("ctdc-memgraph")
+OPENSEARCH_SECRET_NAME = Variable.get("ctdc-opensearch")
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
 log = get_logger('OpenSearchLoader')
