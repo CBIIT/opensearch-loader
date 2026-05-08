@@ -7,17 +7,14 @@ import subprocess
 from typing import Literal, Optional, Dict, Any, List
 from .cli import setup_logging, print_config
 from prefect import flow
-from prefect.variables import Variable
 from .loader import Loader
-from bento.common.secret_manager import get_secret
+from bento.common.secret_manager import get_secret_centralized_worker
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
 
 MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_endpoint"
 MEMGRAPH_PASSWORD = "memgraph_password"
 MODEL_DESC = "model-desc"
-MEMGRAPH_SECRET_NAME = Variable.get("ctdc-memgraph")
-OPENSEARCH_SECRET_NAME = Variable.get("ctdc-opensearch")
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
 log = get_logger('OpenSearchLoader')
@@ -179,10 +176,23 @@ def opensearch_loader_prefect(
     backend_branch_choices: backend_branch_choices, # type: ignore
     about_file,
     indices_file,
-    selected_indices
+    selected_indices,
+    memgraph_secret_path_name: Optional[str] = None,
+    memgraph_secret_account: Optional[str] = None,
+    opensearch_secret_path_name: Optional[str] = None,
+    opensearch_secret_account: Optional[str] = None,
 ):
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
+
+    if not memgraph_secret_path_name or not memgraph_secret_account:
+        raise ValueError("memgraph_secret_path_name and memgraph_secret_account are required")
+    if not opensearch_secret_path_name or not opensearch_secret_account:
+        raise ValueError("opensearch_secret_path_name and opensearch_secret_account are required")
+
+    memgraph_secret_name = memgraph_secret_path_name
+    opensearch_secret_name = opensearch_secret_path_name
+
     model_repo = repo_download(model_repo_url, model_branch, logger)
     model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
     model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
@@ -196,41 +206,63 @@ def opensearch_loader_prefect(
     
     # Retrieve Memgraph and OpenSearch secrets with detailed error handling
     try:
-        logger.info(f"Attempting to retrieve Memgraph secret: '{MEMGRAPH_SECRET_NAME}'")
-        memgraph_secret = get_secret(MEMGRAPH_SECRET_NAME)
-        logger.info(f"Successfully retrieved Memgraph secret: '{MEMGRAPH_SECRET_NAME}'")
+        logger.info(f"Attempting to retrieve Memgraph secret: '{memgraph_secret_name}'")
+        memgraph_secret = {
+            MEMGRAPH_ENDPOINT: get_secret_centralized_worker(
+                secret_path_name=memgraph_secret_name,
+                secret_key_name=MEMGRAPH_ENDPOINT,
+                account=memgraph_secret_account,
+            ),
+            MEMGRAPH_USER: get_secret_centralized_worker(
+                secret_path_name=memgraph_secret_name,
+                secret_key_name=MEMGRAPH_USER,
+                account=memgraph_secret_account,
+            ),
+            MEMGRAPH_PASSWORD: get_secret_centralized_worker(
+                secret_path_name=memgraph_secret_name,
+                secret_key_name=MEMGRAPH_PASSWORD,
+                account=memgraph_secret_account,
+            ),
+        }
+        logger.info(f"Successfully retrieved Memgraph secret: '{memgraph_secret_name}'")
         if not isinstance(memgraph_secret, dict):
-            raise ValueError(f"Memgraph secret '{MEMGRAPH_SECRET_NAME}' is not a JSON object (got {type(memgraph_secret).__name__})")
+            raise ValueError(f"Memgraph secret '{memgraph_secret_name}' is not a JSON object (got {type(memgraph_secret).__name__})")
         logger.debug(f"Memgraph secret available keys: {list(memgraph_secret.keys())}")
         required_memgraph_keys = [MEMGRAPH_ENDPOINT, MEMGRAPH_USER, MEMGRAPH_PASSWORD]
         missing_keys = [k for k in required_memgraph_keys if k not in memgraph_secret]
         if missing_keys:
             raise KeyError(
-                f"Memgraph secret '{MEMGRAPH_SECRET_NAME}' is missing required keys: {missing_keys}. "
+                f"Memgraph secret '{memgraph_secret_name}' is missing required keys: {missing_keys}. "
                 f"Available keys: {list(memgraph_secret.keys())}"
             )
         logger.info(f"Memgraph secret key validation passed: {required_memgraph_keys}")
     except Exception as e:
-        logger.error(f"Failed to access Memgraph secret '{MEMGRAPH_SECRET_NAME}': {type(e).__name__}: {str(e)}")
+        logger.error(f"Failed to access Memgraph secret '{memgraph_secret_name}': {type(e).__name__}: {str(e)}")
         raise
     
     try:
-        logger.info(f"Attempting to retrieve OpenSearch secret: '{OPENSEARCH_SECRET_NAME}'")
-        opensearch_secret = get_secret(OPENSEARCH_SECRET_NAME)
-        logger.info(f"Successfully retrieved OpenSearch secret: '{OPENSEARCH_SECRET_NAME}'")
+        logger.info(f"Attempting to retrieve OpenSearch secret: '{opensearch_secret_name}'")
+        opensearch_secret = {
+            ES_HOST: get_secret_centralized_worker(
+                secret_path_name=opensearch_secret_name,
+                secret_key_name=ES_HOST,
+                account=opensearch_secret_account,
+            )
+        }
+        logger.info(f"Successfully retrieved OpenSearch secret: '{opensearch_secret_name}'")
         if not isinstance(opensearch_secret, dict):
-            raise ValueError(f"OpenSearch secret '{OPENSEARCH_SECRET_NAME}' is not a JSON object (got {type(opensearch_secret).__name__})")
+            raise ValueError(f"OpenSearch secret '{opensearch_secret_name}' is not a JSON object (got {type(opensearch_secret).__name__})")
         logger.debug(f"OpenSearch secret available keys: {list(opensearch_secret.keys())}")
         required_opensearch_keys = [ES_HOST]
         missing_keys = [k for k in required_opensearch_keys if k not in opensearch_secret]
         if missing_keys:
             raise KeyError(
-                f"OpenSearch secret '{OPENSEARCH_SECRET_NAME}' is missing required keys: {missing_keys}. "
+                f"OpenSearch secret '{opensearch_secret_name}' is missing required keys: {missing_keys}. "
                 f"Available keys: {list(opensearch_secret.keys())}"
             )
         logger.info(f"OpenSearch secret key validation passed: {required_opensearch_keys}")
     except Exception as e:
-        logger.error(f"Failed to access OpenSearch secret '{OPENSEARCH_SECRET_NAME}': {type(e).__name__}: {str(e)}")
+        logger.error(f"Failed to access OpenSearch secret '{opensearch_secret_name}': {type(e).__name__}: {str(e)}")
         raise
     
     opensearch_host = "https://" + opensearch_secret[ES_HOST] + "/"

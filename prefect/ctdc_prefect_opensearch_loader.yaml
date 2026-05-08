@@ -39,6 +39,10 @@ deployments:
       about_file: "aboutPagesContent.yaml"
       indices_file: "src/main/resources/yaml/es_indices_ctdc.yml"
       selected_indices: []
+      memgraph_secret_path_name: "ctdc-memgraph"
+      memgraph_secret_account: ""
+      opensearch_secret_path_name: "ctdc-opensearch"
+      opensearch_secret_account: ""
     work_pool:
       name: crdc-curation-16gb-prefect-3.2.14-python3.9
       work_queue_name: default
