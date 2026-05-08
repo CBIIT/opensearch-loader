@@ -8,8 +8,30 @@ from typing import Literal, Optional, Dict, Any, List
 from .cli import setup_logging, print_config
 from prefect import flow
 from .loader import Loader
-from bento.common.secret_manager import get_secret_centralized_worker
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
+
+try:
+    from bento.common.secret_manager import get_secret_centralized_worker
+except ImportError:
+    def get_secret_centralized_worker(
+        secret_path_name: str, secret_key_name: str, account: str
+    ) -> str:
+        """Fallback when the pinned bento submodule does not yet expose this helper."""
+        import boto3
+        import json
+        from botocore.exceptions import ClientError
+
+        region_name = "us-east-1"
+        secret_name_path = (
+            f"arn:aws:secretsmanager:{region_name}:{account}:secret:{secret_path_name}"
+        )
+        session = boto3.session.Session()
+        client = session.client(service_name="secretsmanager", region_name=region_name)
+        try:
+            response = client.get_secret_value(SecretId=secret_name_path)
+        except ClientError as e:
+            raise e
+        return json.loads(response["SecretString"])[secret_key_name]
 
 MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_endpoint"
