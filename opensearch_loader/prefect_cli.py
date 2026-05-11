@@ -50,7 +50,7 @@ except ImportError:
 
 MEMGRAPH_USER = "memgraph_user"
 MEMGRAPH_ENDPOINT = "memgraph_host"
-MEMGRAPH_PASSWORD = "memgraph_password"
+MEMGRAPH_PASSWORD = "memgraph_pass"
 MODEL_DESC = "model-desc"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
