@@ -21,6 +21,20 @@ except ImportError:
         import json
         from botocore.exceptions import ClientError
 
+        def resolve_secret_value(secret_payload, requested_key: str):
+            alias_map = {
+                "memgraph_endpoint": ["memgraph_endpoint", "memgraph_host"],
+                "memgraph_host": ["memgraph_host", "memgraph_endpoint"],
+            }
+
+            for candidate_key in alias_map.get(requested_key, [requested_key]):
+                if candidate_key in secret_payload:
+                    return secret_payload[candidate_key]
+
+            raise KeyError(
+                f"Secret is missing required key '{requested_key}'. Available keys: {list(secret_payload.keys())}"
+            )
+
         region_name = "us-east-1"
         secret_name_path = (
             f"arn:aws:secretsmanager:{region_name}:{account}:secret:{secret_path_name}"
@@ -31,10 +45,11 @@ except ImportError:
             response = client.get_secret_value(SecretId=secret_name_path)
         except ClientError as e:
             raise e
-        return json.loads(response["SecretString"])[secret_key_name]
+        secret_payload = json.loads(response["SecretString"])
+        return resolve_secret_value(secret_payload, secret_key_name)
 
 MEMGRAPH_USER = "memgraph_user"
-MEMGRAPH_ENDPOINT = "memgraph_endpoint"
+MEMGRAPH_ENDPOINT = "memgraph_host"
 MEMGRAPH_PASSWORD = "memgraph_password"
 MODEL_DESC = "model-desc"
 ES_HOST = "es_host"
