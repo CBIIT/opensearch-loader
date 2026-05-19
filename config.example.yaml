@@ -17,6 +17,7 @@ opensearch:
 index_spec_file: "indices.yaml"  # Path to index specification YAML file
 clear_existing_indices: false  # Clear all existing indices before starting (universal setting)
 allow_index_creation: true  # Allow creation of indices if they don't exist (universal setting)
+max_nesting_depth: 5  # Max dot-notation levels in indices.yaml mapping (e.g. a.b.c.d.e)
 
 # Optional: List of index names to load. Only indices in this list will be processed.
 # If not specified or empty, all indices will be processed.

@@ -5,7 +5,8 @@ indices:
     id_field: "user_id"  # Field from query results to use as OpenSearch document _id
     # Mapping is REQUIRED - groups fields by their OpenSearch type
     # Arrays should be mapped as 'keyword' type (OpenSearch handles arrays automatically)
-    # Objects are implicit - only nested properties need mapping using dot notation (e.g., metadata.category)
+    # Dot notation is for mapping only (e.g. metadata.category, shipping.address.street).
+    # Memgraph queries must RETURN nested dicts matching that structure—not flat keys with dots.
     mapping:
       keyword:
         - user_id
@@ -75,10 +76,11 @@ indices:
         - order_id
         - customer_id
         - status
-        - shipping.address  # Nested property in shipping object
-        - shipping.city  # Another nested property in same object
-        - shipping.country
-        - shipping.postal_code
+        - shipping.address.street  # 3-level nested path (shipping → address → street)
+        - shipping.address.city
+        - shipping.address.country
+        - shipping.address.postal_code
+        - shipping.city
         - billing.address  # Nested property in different object (billing)
         - billing.city
         - billing.country
@@ -107,7 +109,11 @@ indices:
       page_size: 1000
     update_queries:
       - name: "update_shipping"
-        query: "MATCH (o:Order) RETURN o.id as order_id, o.shipping_address as shipping.address, o.shipping_city as shipping.city"
+        # Return nested maps so document shape matches mapping (dot notation is mapping-only)
+        query: |
+          MATCH (o:Order)
+          RETURN o.id AS order_id,
+                 {address: {street: o.street, city: o.city}} AS shipping
         variables: {}
         page_size: 500
 

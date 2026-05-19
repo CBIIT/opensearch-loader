@@ -11,6 +11,7 @@ from collections import defaultdict
 
 from .config import Config, load_index_spec
 from .memgraph_client import MemgraphClient
+from .nested_fields import build_mapping_tree, is_path_mapped
 from .opensearch_client import OpenSearchClient
 
 logger = logging.getLogger("OpenSearchLoader")
@@ -26,7 +27,8 @@ class Loader:
             config: Configuration object
         """
         self.config = config
-        
+        self.max_nesting_depth = config.get_max_nesting_depth()
+
         # Initialize Memgraph client
         mg_config = config.get_memgraph_config()
         self.memgraph = MemgraphClient(
@@ -282,95 +284,20 @@ class Loader:
         """Convert grouped YAML format to OpenSearch mapping format.
         
         Converts a mapping where fields are grouped by type into OpenSearch's
-        nested structure. Handles dot notation for nested properties.
+        nested structure. Dot notation in mapping paths defines nested objects
+        (e.g. 'content.metadata.category' for up to max_nesting_depth levels).
         
         Args:
             mapping_config: Dictionary mapping type names to lists of field names
-                Example: {'keyword': ['field1', 'content.title'], 'text': ['content.paragraph']}
+                Example: {'keyword': ['field1', 'content.metadata.category']}
             
         Returns:
             Dictionary in OpenSearch mapping format
-                Example: {
-                    'field1': {'type': 'keyword'},
-                    'content': {
-                        'type': 'object',
-                        'properties': {
-                            'title': {'type': 'keyword'},
-                            'paragraph': {'type': 'text'}
-                        }
-                    }
-                }
         
         Raises:
             ValueError: If mapping is empty or invalid
         """
-        if not mapping_config:
-            raise ValueError("Mapping configuration cannot be empty")
-        
-        # Valid OpenSearch field types
-        valid_types = {'keyword', 'text', 'search_as_you_type', 'long', 'integer', 
-                      'double', 'float', 'boolean', 'date', 'object'}
-        
-        result = {}
-        nested_fields = {}  # Track nested properties by parent object
-        all_field_paths = set()  # All defined paths (top-level and "parent.prop") for duplicate detection
-        
-        # Process each type and its fields
-        for field_type, fields in mapping_config.items():
-            if not isinstance(fields, list):
-                raise ValueError(f"Fields for type '{field_type}' must be a list")
-            
-            if field_type not in valid_types:
-                raise ValueError(f"Invalid field type '{field_type}'. Valid types: {valid_types}")
-            
-            for field in fields:
-                if not isinstance(field, str) or not field.strip():
-                    raise ValueError(f"Field name must be a non-empty string, got: {field}")
-                
-                field = field.strip()
-                
-                # Check for duplicate fields (same path defined twice, e.g. under two types)
-                if field in all_field_paths:
-                    raise ValueError(f"Duplicate field definition: '{field}'")
-                all_field_paths.add(field)
-                
-                # Check if this is a nested property (contains dot)
-                if '.' in field:
-                    # Parse nested property (e.g., "content.title" -> parent="content", prop="title")
-                    parts = field.split('.')
-                    if len(parts) != 2:
-                        raise ValueError(f"Nested properties must use single-level dot notation (e.g., 'content.title'), got: '{field}'")
-                    
-                    parent_obj, prop_name = parts[0], parts[1]
-                    
-                    # Track nested properties
-                    if parent_obj not in nested_fields:
-                        nested_fields[parent_obj] = {'fields': set(), 'properties': {}}
-                    
-                    if prop_name in nested_fields[parent_obj]['fields']:
-                        raise ValueError(f"Duplicate nested property: '{field}'")
-                    
-                    nested_fields[parent_obj]['fields'].add(prop_name)
-                    nested_fields[parent_obj]['properties'][prop_name] = {'type': field_type}
-                else:
-                    # Top-level field
-                    result[field] = {'type': field_type}
-        
-        # Add nested objects to result
-        for parent_obj, nested_info in nested_fields.items():
-            # Check if parent object conflicts with a top-level field
-            if parent_obj in result:
-                raise ValueError(f"Cannot have both top-level field '{parent_obj}' and nested properties under '{parent_obj}.*'")
-            
-            result[parent_obj] = {
-                'type': 'object',
-                'properties': nested_info['properties']
-            }
-        
-        if not result:
-            raise ValueError("Mapping must contain at least one field")
-        
-        return result
+        return build_mapping_tree(mapping_config, self.max_nesting_depth)
     
     def _validate_query_fields(self, index_name: str, documents: List[Dict[str, Any]], 
                               mapping: Dict[str, Dict[str, Any]]) -> bool:
@@ -387,42 +314,14 @@ class Loader:
         if not documents:
             return True  # No documents to validate
         
-        # Collect all field names from documents
         all_fields = set()
         for doc in documents:
             all_fields.update(self._extract_field_names(doc))
-        
-        # Build a set of mapped field names (including nested properties)
-        mapped_fields = set()
-        nested_mappings = {}  # Track nested property mappings
-        
-        for field_name, field_config in mapping.items():
-            if field_config.get('type') == 'object' and 'properties' in field_config:
-                # This is a nested object - track its properties
-                parent = field_name
-                nested_mappings[parent] = set(field_config['properties'].keys())
-                # Add parent object itself (objects are implicit)
-                mapped_fields.add(parent)
-            else:
-                # Top-level field
-                mapped_fields.add(field_name)
-        
-        # Check each field
-        unmapped_fields = []
-        for field in all_fields:
-            if field in mapped_fields:
-                continue  # Field is directly mapped
-            
-            # Check if it's a nested property (e.g., "content.title")
-            if '.' in field:
-                parts = field.split('.')
-                if len(parts) == 2:
-                    parent, prop = parts[0], parts[1]
-                    if parent in nested_mappings and prop in nested_mappings[parent]:
-                        continue  # Nested property is mapped
-            
-            # Field is not mapped
-            unmapped_fields.append(field)
+
+        unmapped_fields = [
+            field for field in all_fields
+            if not is_path_mapped(field, mapping)
+        ]
         
         if unmapped_fields:
             logger.error(f"Index {index_name}: Fields {unmapped_fields} returned by query but not found in mapping. Skipping index.")
