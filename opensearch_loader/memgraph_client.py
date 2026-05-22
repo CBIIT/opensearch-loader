@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Any, Optional, Iterator
+from urllib.parse import urlparse
 from neo4j import GraphDatabase
 
 logger = logging.getLogger("OpenSearchLoader")
@@ -17,6 +18,32 @@ WRITE_KEYWORDS = {
 
 class MemgraphClient:
     """Client for executing read-only queries against Memgraph."""
+
+    @staticmethod
+    def _normalize_host_and_port(host: str, port: int) -> tuple[str, int]:
+        """Normalize host values so URI-style inputs still produce a valid bolt URI."""
+        normalized_host = host.strip() if isinstance(host, str) else host
+        normalized_port = int(port)
+
+        # Accept values like "bolt://host:7687" or "neo4j://host" from secrets.
+        if isinstance(normalized_host, str) and "://" in normalized_host:
+            parsed = urlparse(normalized_host)
+            if not parsed.hostname:
+                raise ValueError(
+                    f"Invalid Memgraph host value '{host}'. Expected hostname, host:port, or bolt://host[:port]."
+                )
+            normalized_host = parsed.hostname
+            if parsed.port:
+                normalized_port = parsed.port
+
+        # Accept values like "host:7687" when no scheme is provided.
+        elif isinstance(normalized_host, str) and ":" in normalized_host:
+            host_part, port_part = normalized_host.rsplit(":", 1)
+            if host_part and port_part.isdigit():
+                normalized_host = host_part
+                normalized_port = int(port_part)
+
+        return normalized_host, normalized_port
     
     def __init__(self, host: str = "localhost", port: int = 7687,
                  username: Optional[str] = None, password: Optional[str] = None):
@@ -28,7 +55,8 @@ class MemgraphClient:
             username: Optional username
             password: Optional password
         """
-        uri = f"bolt://{host}:{port}"
+        normalized_host, normalized_port = self._normalize_host_and_port(host, port)
+        uri = f"bolt://{normalized_host}:{normalized_port}"
         auth = (username, password) if username and password else None
         self.driver = GraphDatabase.driver(uri, auth=auth)
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
