@@ -273,7 +273,35 @@ class Config:
 
 
 def load_index_spec(index_spec_file: str) -> Dict[str, Any]:
-    """Load index specification from YAML file."""
-    with open(index_spec_file, 'r') as f:
-        return yaml.safe_load(f) or {}
+    """Load index specification from YAML file.
+
+    Supports both of these top-level YAML formats:
+    1. {'indices': [...]} (preferred)
+    2. [...] (interpreted as the indices list)
+
+    Also tolerates UTF-8 BOM in the file.
+    """
+    with open(index_spec_file, 'r', encoding='utf-8-sig') as f:
+        spec = yaml.safe_load(f) or {}
+
+    if isinstance(spec, list):
+        return {'indices': spec}
+
+    if isinstance(spec, dict):
+        # Defensive: normalize accidental invisible-prefix top-level key variants,
+        # e.g. "\ufeffindices" (BOM) or "\u200bindices" (zero-width space).
+        if 'indices' not in spec:
+            invisible_prefix_chars = '\ufeff\u200b\u200c\u200d'
+            normalized_key = next(
+                (
+                    k for k in spec.keys()
+                    if isinstance(k, str) and k.lstrip(invisible_prefix_chars).strip().lower() == 'indices'
+                ),
+                None,
+            )
+            if normalized_key is not None:
+                spec['indices'] = spec[normalized_key]
+        return spec
+
+    raise ValueError(f"Invalid index specification format in {index_spec_file}: expected mapping or list")
 

@@ -161,6 +161,7 @@ class Loader:
                 logger.debug("Model files configured but no model indices in selected/filtered indices, skipping model initialization")
         
         start_time = time.time()
+        had_errors = False
         
         # Process each index
         for index_config in indices:
@@ -182,7 +183,7 @@ class Loader:
             except Exception as e:
                 index_end_time = time.time()
                 index_duration = index_end_time - index_start_time
-                error_occurred = True
+                had_errors = True
                 logger.error(f"Error processing index {index_name}: {e}. Skipping to next index.")
                 
                 # Record failed index statistics
@@ -201,6 +202,9 @@ class Loader:
         
         # Save query timings
         self._save_query_timings()
+
+        if had_errors:
+            raise RuntimeError("One or more indices failed during loading. See summary and logs for details.")
     
     def _process_index(self, index_config: Dict[str, Any]) -> int:
         """Process a single index.
@@ -306,10 +310,23 @@ class Loader:
         """
         if not mapping_config:
             raise ValueError("Mapping configuration cannot be empty")
+
+        # Format 1: explicit OpenSearch mapping format
+        # Example: {"guid": {"type": "keyword"}, "age": {"type": "integer"}}
+        if all(isinstance(v, dict) and 'type' in v for v in mapping_config.values()):
+            explicit_mapping = {}
+            for field_name, field_config in mapping_config.items():
+                if not isinstance(field_name, str) or not field_name.strip():
+                    raise ValueError(f"Field name must be a non-empty string, got: {field_name}")
+                field_type = field_config.get('type')
+                if not isinstance(field_type, str) or not field_type.strip():
+                    raise ValueError(f"Field '{field_name}' must define a non-empty 'type'")
+                explicit_mapping[field_name.strip()] = field_config
+            return explicit_mapping
         
         # Valid OpenSearch field types
-        valid_types = {'keyword', 'text', 'search_as_you_type', 'long', 'integer', 
-                      'double', 'float', 'boolean', 'date', 'object'}
+        valid_types = {'keyword', 'text', 'search_as_you_type', 'long', 'integer',
+                  'double', 'float', 'boolean', 'date', 'object', 'nested'}
         
         result = {}
         nested_fields = {}  # Track nested properties by parent object

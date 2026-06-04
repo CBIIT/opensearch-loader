@@ -1,6 +1,7 @@
 """OpenSearch client for index management and document upsert."""
 
 import logging
+from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
@@ -25,8 +26,22 @@ class OpenSearchClient:
             username: Optional username for authentication
             password: Optional password for authentication
         """
-        # Normalize host to a list for OpenSearch library
-        hosts = [host]
+        # Normalize host for OpenSearch library.
+        # Accepts either full URL (e.g. http://host:9200) or hostname.
+        parsed = urlparse(host)
+        if parsed.scheme and parsed.netloc:
+            host_entry = {
+                'host': parsed.hostname,
+                'port': parsed.port or (443 if parsed.scheme == 'https' else 80),
+                'scheme': parsed.scheme,
+            }
+        else:
+            host_entry = {
+                'host': host,
+                'port': 443 if use_ssl else 80,
+                'scheme': 'https' if use_ssl else 'http',
+            }
+        hosts = [host_entry]
         timeout_seconds = 60
         http_auth = (username, password) if username and password else None
 
@@ -40,14 +55,23 @@ class OpenSearchClient:
         self.client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
-            port=443,
             use_ssl=use_ssl,
             verify_certs=verify_certs,
             ssl_show_warn=False,
             connection_class=RequestsHttpConnection,
             timeout=timeout_seconds
         )
-        logger.info(f"Connected to OpenSearch at {host}")
+
+        # Validate connectivity upfront to avoid false-positive "Connected" logs.
+        try:
+            self.client.ping()
+            logger.info(f"Connected to OpenSearch at {host}")
+        except Exception as e:
+            raise ConnectionError(
+                f"Unable to connect to OpenSearch at {host}. "
+                "If running locally, ensure the hostname is resolvable from this machine "
+                "(for Docker, consider localhost/port mapping)."
+            ) from e
     
     def index_exists(self, index_name: str) -> bool:
         """Check if an index exists.

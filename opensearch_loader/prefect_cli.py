@@ -19,6 +19,8 @@ MODEL_REPO_URL = "model_repo_url"
 MODEL_DESC = "model-desc"
 DROP_DOWN_CONFIG = "prefect/prefect_drop_down_config_opensearch_loader.yaml"
 MONOREPO_URL = "monorepo_url"
+BACKEND_REPO_URL = "backend_repo_url"
+FRONTEND_REPO_URL = "frontend_repo_url"
 ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
@@ -170,30 +172,30 @@ def repo_download(repo, version, logger):
 config_file = DROP_DOWN_CONFIG
 with open(config_file, 'r') as file:
     config_drop_list = yaml.safe_load(file)
-model_repo_url = config_drop_list.get(MODEL_REPO_URL)
-monorepo_url = config_drop_list.get(MONOREPO_URL)
-model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
-monorepo_branch_choices = Literal[tuple(get_github_branches(monorepo_url))]
+backend_repo_url = config_drop_list.get(BACKEND_REPO_URL) or config_drop_list.get(MODEL_REPO_URL)
+frontend_repo_url = config_drop_list.get(FRONTEND_REPO_URL) or config_drop_list.get(MONOREPO_URL)
+backend_branch_choices = Literal[tuple(get_github_branches(backend_repo_url))]
+frontend_branch_choices = Literal[tuple(get_github_branches(frontend_repo_url))]
 env = config_drop_list[ENVIRONMENTS].keys()
 environment_choices = Literal[tuple(list(env))]
 @flow(name="CRDC Data Hub OpenSearch Loader", log_prints=True)
 def opensearch_loader_prefect(
     environment: environment_choices, # type: ignore
-    model_branch: model_branch_choices, # type: ignore
-    monorepo_branch_choices: monorepo_branch_choices, # type: ignore
+    backend_branch: backend_branch_choices, # type: ignore
+    frontend_branch: frontend_branch_choices, # type: ignore
     about_file,
     indices_file,
     selected_indices
 ):
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
-    model_repo = repo_download(model_repo_url, model_branch, logger)
-    model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
-    model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
-    model_files = model_yaml_files + model_yml_files
-    monorepo = repo_download(monorepo_url, monorepo_branch_choices, logger)
-    about_file_path = os.path.join(monorepo, about_file)
-    indices_file_path = os.path.join(monorepo, indices_file)
+    backend_repo = repo_download(backend_repo_url, backend_branch, logger)
+    backend_yaml_files = glob.glob(f'{backend_repo}/{MODEL_DESC}/*model*.yaml')
+    backend_yml_files = glob.glob(f'{backend_repo}/{MODEL_DESC}/*model*.yml')
+    model_files = backend_yaml_files + backend_yml_files
+    frontend_repo = repo_download(frontend_repo_url, frontend_branch, logger)
+    about_file_path = os.path.join(frontend_repo, about_file)
+    indices_file_path = os.path.join(backend_repo, indices_file)
     memgraph_secret_name = Variables.get(config_drop_list[ENVIRONMENTS][environment])
     secret = get_secret(memgraph_secret_name)
     opensearch_host = secret[ES_HOST]
