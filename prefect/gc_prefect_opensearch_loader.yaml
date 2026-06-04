@@ -19,9 +19,8 @@ pull:
       repository: https://github.com/CBIIT/opensearch-loader.git
       branch: "feature/integrated-dashboard"
       include_submodules: True
-  - prefect.deployments.steps.set_working_directory:
-      directory: "{{ clone-step.directory }}"
   - prefect.deployments.steps.pip_install_requirements:
+      directory: "{{ clone-step.directory }}"
       requirements_file: requirements.txt
       stream_output: False
 
