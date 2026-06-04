@@ -18,7 +18,6 @@ pull:
       id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
       branch: "feature/integrated-dashboard"
-      directory: "/tmp/opensearch-loader-feature-integrated-dashboard"
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
       directory: "{{ clone-step.directory }}"
