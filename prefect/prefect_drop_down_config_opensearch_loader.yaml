@@ -1,8 +1,8 @@
 environments:
   dev_cdk: "gc_memgraph_secret_name_dev_cdk"
   dev2_cdk: "gc_memgraph_secret_name_dev2_cdk"
-backend_repo_url: "https://github.com/CBIIT/cds-model.git"
-frontend_repo_url: "https://github.com/CBIIT/general-commons.git"
+backend_repo_url: "https://github.com/CBIIT/CCDI-Integrated-Backend.git"
+frontend_repo_url: "https://github.com/CBIIT/CCDI-C3DC-Integrated-UI.git"
 # Legacy keys retained for compatibility with older deployments.
-model_repo_url: "https://github.com/CBIIT/cds-model.git"
-monorepo_url: "https://github.com/CBIIT/general-commons.git"
+model_repo_url: "https://github.com/CBIIT/ccdi-dcc-model.git"
+monorepo_url: "https://github.com/CBIIT/CCDI-C3DC-Integrated-UI.git"

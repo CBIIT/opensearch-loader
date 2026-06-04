@@ -142,24 +142,33 @@ def get_github_branches(repo_url):
     # Extract owner and repo name
     parts = repo_url.rstrip('/').split('/')
     owner, repo = parts[-2], parts[-1]
-    branches = []
-    page = 1
-    while True:
-        api_url = f'https://api.github.com/repos/{owner}/{repo}/branches?per_page=100&page={page}'
-        try:
-            response = requests.get(api_url)
-            response.raise_for_status()
-            data = response.json()
-            if not data:
+
+    def _fetch_names(endpoint: str, field: str) -> List[str]:
+        names: List[str] = []
+        page = 1
+        while True:
+            api_url = f'https://api.github.com/repos/{owner}/{repo}/{endpoint}?per_page=100&page={page}'
+            try:
+                response = requests.get(api_url)
+                response.raise_for_status()
+                data = response.json()
+                if not data:
+                    break
+                names.extend([item[field] for item in data if field in item])
+                if len(data) < 100:
+                    break
+                page += 1
+            except Exception as e:
+                log.error(f"Error fetching {endpoint} from GitHub: {e}")
                 break
-            branches.extend([branch['name'] for branch in data])
-            if len(data) < 100:
-                break
-            page += 1
-        except Exception as e:
-            log.error(f"Error fetching branches from GitHub: {e}")
-            break
-    return branches
+        return names
+
+    branches = _fetch_names('branches', 'name')
+    tags = _fetch_names('tags', 'name')
+
+    # Keep branch names first, then append tag names that are not duplicates.
+    refs = branches + [tag for tag in tags if tag not in branches]
+    return refs
 
 
 def repo_download(repo, version, logger):
@@ -172,8 +181,10 @@ def repo_download(repo, version, logger):
 config_file = DROP_DOWN_CONFIG
 with open(config_file, 'r') as file:
     config_drop_list = yaml.safe_load(file)
+model_repo_url = config_drop_list.get(MODEL_REPO_URL) or config_drop_list.get(BACKEND_REPO_URL)
 backend_repo_url = config_drop_list.get(BACKEND_REPO_URL) or config_drop_list.get(MODEL_REPO_URL)
 frontend_repo_url = config_drop_list.get(FRONTEND_REPO_URL) or config_drop_list.get(MONOREPO_URL)
+model_branch_choices = Literal[tuple(get_github_branches(model_repo_url))]
 backend_branch_choices = Literal[tuple(get_github_branches(backend_repo_url))]
 frontend_branch_choices = Literal[tuple(get_github_branches(frontend_repo_url))]
 env = config_drop_list[ENVIRONMENTS].keys()
@@ -181,6 +192,7 @@ environment_choices = Literal[tuple(list(env))]
 @flow(name="CRDC Data Hub OpenSearch Loader", log_prints=True)
 def opensearch_loader_prefect(
     environment: environment_choices, # type: ignore
+    model_branch: model_branch_choices, # type: ignore
     backend_branch: backend_branch_choices, # type: ignore
     frontend_branch: frontend_branch_choices, # type: ignore
     about_file,
@@ -189,10 +201,11 @@ def opensearch_loader_prefect(
 ):
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
+    model_repo = repo_download(model_repo_url, model_branch, logger)
+    model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
+    model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
+    model_files = model_yaml_files + model_yml_files
     backend_repo = repo_download(backend_repo_url, backend_branch, logger)
-    backend_yaml_files = glob.glob(f'{backend_repo}/{MODEL_DESC}/*model*.yaml')
-    backend_yml_files = glob.glob(f'{backend_repo}/{MODEL_DESC}/*model*.yml')
-    model_files = backend_yaml_files + backend_yml_files
     frontend_repo = repo_download(frontend_repo_url, frontend_branch, logger)
     about_file_path = os.path.join(frontend_repo, about_file)
     indices_file_path = os.path.join(backend_repo, indices_file)
