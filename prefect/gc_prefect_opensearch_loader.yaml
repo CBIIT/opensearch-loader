@@ -18,12 +18,13 @@ pull:
       id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
       branch: "feature/integrated-dashboard"
+      directory: "/tmp/opensearch-loader-feature-integrated-dashboard"
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
       directory: "{{ clone-step.directory }}"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
-      directory: "."
+      directory: "{{ clone-step.directory }}"
       stream_output: False
 
 # the deployments section allows you to provide configuration for deploying flows
