@@ -17,7 +17,7 @@ pull:
   - prefect.deployments.steps.git_clone:
       #id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-  branch: feature/integrated-dashboard
+      branch: "feature/integrated-dashboard"
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
       directory: "/opt/prefect/opensearch-loader-prefect"
