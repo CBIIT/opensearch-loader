@@ -42,6 +42,7 @@ class OpenSearchClient:
                 'scheme': 'https' if use_ssl else 'http',
             }
         hosts = [host_entry]
+        safe_host = f"{host_entry['scheme']}://{host_entry['host']}:{host_entry['port']}"
         timeout_seconds = 60
         http_auth = (username, password) if username and password else None
 
@@ -65,10 +66,10 @@ class OpenSearchClient:
         # Validate connectivity upfront to avoid false-positive "Connected" logs.
         try:
             self.client.ping()
-            logger.info(f"Connected to OpenSearch at {host}")
+            logger.info(f"Connected to OpenSearch at {safe_host}")
         except Exception as e:
             raise ConnectionError(
-                f"Unable to connect to OpenSearch at {host}. "
+                f"Unable to connect to OpenSearch at {safe_host}. "
                 "If running locally, ensure the hostname is resolvable from this machine "
                 "(for Docker, consider localhost/port mapping)."
             ) from e
@@ -372,4 +373,3 @@ class OpenSearchClient:
         except Exception as e:
             logger.error(f"Error executing bulk update: {e}")
             raise
-
