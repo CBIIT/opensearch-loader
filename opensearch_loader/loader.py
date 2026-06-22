@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from .config import Config, load_index_spec
 from .memgraph_client import MemgraphClient
-from .nested_fields import build_mapping_tree, is_path_mapped
+from .nested_fields import DEFAULT_MAX_NESTING_DEPTH, build_mapping_tree, is_path_mapped
 from .opensearch_client import OpenSearchClient
 
 logger = logging.getLogger("OpenSearchLoader")
@@ -27,7 +27,10 @@ class Loader:
             config: Configuration object
         """
         self.config = config
-        self.max_nesting_depth = config.get_max_nesting_depth()
+        if hasattr(config, 'get_max_nesting_depth'):
+            self.max_nesting_depth = config.get_max_nesting_depth()
+        else:
+            self.max_nesting_depth = config.get('max_nesting_depth', DEFAULT_MAX_NESTING_DEPTH)
 
         # Initialize Memgraph client
         mg_config = config.get_memgraph_config()

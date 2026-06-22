@@ -28,11 +28,15 @@ class MemgraphClient:
             username: Optional username
             password: Optional password
         """
-        uri = f"bolt://{host}:{port}"
-        auth = (username, password) if username and password else None
-        self.driver = GraphDatabase.driver(uri, auth=auth)
+        self._uri = f"bolt://{host}:{port}"
+        self._auth = (username, password) if username and password else None
+        self.driver = GraphDatabase.driver(
+            self._uri, auth=self._auth,
+            keep_alive=True,           # send TCP keepalives to prevent ELB idle-timeout drops
+            max_connection_lifetime=55, # recycle connections before ELB's typical 60s idle timeout
+        )
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
-        logger.info(f"Connected to Memgraph at {uri}")
+        logger.info(f"Connected to Memgraph at {self._uri}")
     
     def close(self):
         """Close the database connection."""
@@ -114,16 +118,26 @@ class MemgraphClient:
         self.validate_pagination_params(query)
         
         parameters = parameters or {}
-        
-        results = []
-        with self.driver.session() as session:
-            result = session.run(query, parameters)
-            for record in result:
-                # Convert record to dictionary
-                results.append(dict(record))
-        
-        logger.debug(f"Executed query, returned {len(results)} results")
-        return results
+
+        for attempt in range(2):
+            try:
+                results = []
+                with self.driver.session() as session:
+                    result = session.run(query, parameters)
+                    for record in result:
+                        results.append(dict(record))
+                logger.debug(f"Executed query, returned {len(results)} results")
+                return results
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"Memgraph query failed ({e}), reconnecting and retrying...")
+                    try:
+                        self.driver.close()
+                    except Exception:
+                        pass
+                    self.driver = GraphDatabase.driver(self._uri, auth=self._auth)
+                else:
+                    raise
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
                                page_size: int = 10000, index_name: Optional[str] = None,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import Config
 from .loader import Loader
+from .nested_fields import DEFAULT_MAX_NESTING_DEPTH
 
 
 def setup_logging(verbose: bool = False):
@@ -55,7 +56,11 @@ def print_config(config: Config):
     if config.get_test_mode():
         logger.info(f"  test_mode: {config.get_test_mode()}")
 
-    logger.info(f"  max_nesting_depth: {config.get_max_nesting_depth()}")
+    if hasattr(config, 'get_max_nesting_depth'):
+        max_nesting_depth = config.get_max_nesting_depth()
+    else:
+        max_nesting_depth = config.get('max_nesting_depth', DEFAULT_MAX_NESTING_DEPTH)
+    logger.info(f"  max_nesting_depth: {max_nesting_depth}")
 
 
 def parse_args():
