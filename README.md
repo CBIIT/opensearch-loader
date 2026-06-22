@@ -48,6 +48,7 @@ opensearch:
 index_spec_file: "indices.yaml"  # Path to index specification file
 clear_existing_indices: false  # Clear all existing indices before starting (universal)
 allow_index_creation: true  # Allow creation of indices if missing (universal)
+max_nesting_depth: 5  # Max dot-notation levels in indices.yaml mapping paths
 ```
 
 ### Index Specification File
@@ -102,6 +103,7 @@ export OS_LOADER_OPENSEARCH_HOST=http://localhost:9200
 export OS_LOADER_INDEX_SPEC_FILE=indices.yaml
 export OS_LOADER_CLEAR_EXISTING_INDICES=false
 export OS_LOADER_ALLOW_INDEX_CREATION=true
+export OS_LOADER_MAX_NESTING_DEPTH=5
 ```
 
 ### Configuration Precedence
@@ -125,6 +127,36 @@ Configuration values are resolved in the following order (highest to lowest prec
 - Queries containing write operations (CREATE, SET, DELETE, etc.) will be rejected
 - Each query must return a field matching the `id_field` specified in the index configuration
 - Query results use direct field mapping (column names → OpenSearch document fields)
+- For nested fields, Memgraph queries must return **nested dict structures** that match the mapping tree (dot notation is only used in `indices.yaml` mapping definitions, not in query result keys)
+
+### Nested field mapping
+
+In each index's `mapping` block, use dot notation to declare nested object paths (up to `max_nesting_depth` levels, default 5):
+
+```yaml
+mapping:
+  keyword:
+    - order_id
+    - shipping.address.street  # 3-level path → shipping.address.street in OpenSearch
+  text:
+    - shipping.address.instructions
+```
+
+Documents from Memgraph must already be nested JSON, for example:
+
+```json
+{
+  "order_id": "123",
+  "shipping": {
+    "address": {
+      "street": "Main St",
+      "instructions": "Leave at door"
+    }
+  }
+}
+```
+
+Adjust the limit via `max_nesting_depth` in `config.yaml`, `OS_LOADER_MAX_NESTING_DEPTH`, or `--max-nesting-depth`.
 
 ## Examples
 

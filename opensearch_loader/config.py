@@ -7,6 +7,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
+from .nested_fields import DEFAULT_MAX_NESTING_DEPTH, MAX_NESTING_DEPTH_LIMIT
+
 logger = logging.getLogger("OpenSearchLoader")
 
 
@@ -61,6 +63,7 @@ class Config:
             'OS_LOADER_ABOUT_FILE': ('about_file',),
             'OS_LOADER_MODEL_FILES': ('model_files',),
             'OS_LOADER_TEST_MODE': ('test_mode',),
+            'OS_LOADER_MAX_NESTING_DEPTH': ('max_nesting_depth',),
         }
         
         for env_var, path in env_mapping.items():
@@ -194,6 +197,9 @@ class Config:
         # Use hasattr to handle argparse.SUPPRESS (attribute won't exist if flag not provided)
         if hasattr(args, 'test_mode'):
             self.config['test_mode'] = args.test_mode
+
+        if hasattr(args, 'max_nesting_depth') and args.max_nesting_depth is not None:
+            self.config['max_nesting_depth'] = args.max_nesting_depth
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
@@ -270,6 +276,25 @@ class Config:
             True if test_mode is enabled, False otherwise (default).
         """
         return self.config.get('test_mode', False)
+
+    def get_max_nesting_depth(self) -> int:
+        """Get maximum nesting depth for dot-notation mapping paths in indices.yaml.
+
+        Returns:
+            Positive integer, defaulting to DEFAULT_MAX_NESTING_DEPTH (5).
+        """
+        value = self.config.get('max_nesting_depth', DEFAULT_MAX_NESTING_DEPTH)
+        try:
+            depth = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"max_nesting_depth must be a positive integer, got: {value!r}"
+            )
+        if depth < 1 or depth > MAX_NESTING_DEPTH_LIMIT:
+            raise ValueError(
+                f"max_nesting_depth must be between 1 and {MAX_NESTING_DEPTH_LIMIT}, got: {depth}"
+            )
+        return depth
 
 
 def load_index_spec(index_spec_file: str) -> Dict[str, Any]:

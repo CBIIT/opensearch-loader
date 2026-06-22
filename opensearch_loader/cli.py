@@ -55,6 +55,8 @@ def print_config(config: Config):
     if config.get_test_mode():
         logger.info(f"  test_mode: {config.get_test_mode()}")
 
+    logger.info(f"  max_nesting_depth: {config.get_max_nesting_depth()}")
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -185,6 +187,12 @@ def parse_args():
         action='store_true',
         default=argparse.SUPPRESS,
         help='Run in test mode: only process one page per query to validate queries (overrides config and env)'
+    )
+
+    parser.add_argument(
+        '--max-nesting-depth',
+        type=int,
+        help='Max dot-notation levels in indices.yaml mapping paths (overrides config and env, default: 5)'
     )
     
     # Other options
