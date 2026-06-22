@@ -15,20 +15,18 @@ push: null
 # pull section allows you to provide instructions for cloning this project in remote locations
 pull:
   - prefect.deployments.steps.git_clone:
-      #id: clone-step
+      id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-      branch: prefect
+      branch: "feature/integrated-dashboard"
       include_submodules: True
-  - prefect.deployments.steps.set_working_directory:
-      directory: "/opt/prefect/opensearch-loader-prefect"
   - prefect.deployments.steps.pip_install_requirements:
-      requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
+      requirements_file: requirements.txt
       stream_output: False
 
 # the deployments section allows you to provide configuration for deploying flows
 deployments:
-  - name: gc-data-hub-new-opensearch-loader
+  - name: gc-data-integrated-dashboard-new-opensearch-loader
     version: null
     tags: []
     description: null
@@ -36,11 +34,14 @@ deployments:
     flow_name: null
     entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
     parameters:
-      about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
-      indices_file: "backend/src/main/resources/yaml/indices.yaml"
+      model_branch: "1.0.0"
+      backend_branch: "2.0.0"
+      frontend_branch: "2.0.0"
+      about_file: "src/content/dev/aboutPagesContent.yaml"
+      indices_file: "src/main/resources/yaml/indices.yaml"
       selected_indices: []
     work_pool:
-      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      name: ccdi-c3dc-16gb-prefect-3.2.14-python3.9
       work_queue_name: default
       job_variables:
         env:
