@@ -10,6 +10,7 @@ VALID_FIELD_TYPES = {
     'double', 'float', 'boolean', 'date', 'object', 'nested',
 }
 
+CONTAINER_FIELD_TYPES = {'object', 'nested'}
 DEFAULT_CONTAINER_FIELD_TYPE = 'nested'
 
 
@@ -50,8 +51,7 @@ def _insert_path(properties: Dict[str, Dict[str, Any]], parts: List[str], field_
     if not tail:
         if head in properties:
             existing = properties[head]
-            existing_type = existing.get('type')
-            if (existing_type == 'object' or existing_type == 'nested') and 'properties' in existing:
+            if existing.get('type') in CONTAINER_FIELD_TYPES and 'properties' in existing:
                 raise ValueError(
                     f"Cannot map '{path_str}' as a leaf field: "
                     f"'{head}' is already a nested field with child properties"
@@ -61,8 +61,7 @@ def _insert_path(properties: Dict[str, Dict[str, Any]], parts: List[str], field_
 
     if head in properties:
         existing = properties[head]
-        existing_type = existing.get('type')
-        if (existing_type != 'object' and existing_type != 'nested') or 'properties' not in existing:
+        if existing.get('type') not in CONTAINER_FIELD_TYPES or 'properties' not in existing:
             raise ValueError(
                 f"Cannot have nested properties under '{head}': "
                 f"it is already mapped as type '{existing.get('type')}'"
@@ -146,14 +145,13 @@ def is_path_mapped(field_path: str, mapping: Dict[str, Dict[str, Any]]) -> bool:
 
         cfg = current[part]
         is_last = i == len(parts) - 1
-        cfg_type = cfg.get('type')
 
         if is_last:
-            if (cfg_type == 'object' or cfg_type == 'nested') and 'properties' in cfg:
+            if cfg.get('type') in CONTAINER_FIELD_TYPES and 'properties' in cfg:
                 return True
-            return cfg_type is not None
+            return cfg.get('type') is not None
 
-        if (cfg_type != 'object' and cfg_type != 'nested') or 'properties' not in cfg:
+        if cfg.get('type') not in CONTAINER_FIELD_TYPES or 'properties' not in cfg:
             return False
 
         current = cfg['properties']
@@ -175,9 +173,8 @@ def collect_mapped_leaf_paths(mapping: Dict[str, Dict[str, Any]], prefix: str = 
 
     for name, cfg in mapping.items():
         path = f"{prefix}.{name}" if prefix else name
-        cfg_type = cfg.get('type')
 
-        if (cfg_type == 'object' or cfg_type == 'nested') and 'properties' in cfg:
+        if cfg.get('type') in CONTAINER_FIELD_TYPES and 'properties' in cfg:
             paths.update(collect_mapped_leaf_paths(cfg['properties'], path))
         else:
             paths.add(path)
