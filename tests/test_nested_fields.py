@@ -42,7 +42,7 @@ class BuildMappingTreeTests(unittest.TestCase):
             mapping,
             {
                 'metadata': {
-                    'type': 'object',
+                    'type': 'nested',
                     'properties': {
                         'category': {'type': 'keyword'},
                     },
@@ -55,9 +55,28 @@ class BuildMappingTreeTests(unittest.TestCase):
             {'keyword': ['shipping.address.street']},
             5,
         )
+        self.assertEqual(mapping['shipping']['type'], 'nested')
+        self.assertEqual(mapping['shipping']['properties']['address']['type'], 'nested')
         self.assertEqual(
             mapping['shipping']['properties']['address']['properties']['street'],
             {'type': 'keyword'},
+        )
+
+    def test_parent_paths_are_nested_type(self):
+        mapping = build_mapping_tree(
+            {
+                'keyword': [
+                    'diagnoses.id',
+                    'combined_filters.survival_filters.last_known_survival_status',
+                ],
+            },
+            5,
+        )
+        self.assertEqual(mapping['diagnoses']['type'], 'nested')
+        self.assertEqual(mapping['combined_filters']['type'], 'nested')
+        self.assertEqual(
+            mapping['combined_filters']['properties']['survival_filters']['type'],
+            'nested',
         )
 
     def test_five_level(self):
