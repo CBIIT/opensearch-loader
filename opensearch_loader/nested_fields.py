@@ -7,8 +7,11 @@ MAX_NESTING_DEPTH_LIMIT = 5
 
 VALID_FIELD_TYPES = {
     'keyword', 'text', 'search_as_you_type', 'long', 'integer',
-    'double', 'float', 'boolean', 'date', 'object',
+    'double', 'float', 'boolean', 'date', 'object', 'nested',
 }
+
+CONTAINER_FIELD_TYPES = {'object', 'nested'}
+DEFAULT_CONTAINER_FIELD_TYPE = 'nested'
 
 
 def validate_field_path(path: str, max_depth: int) -> List[str]:
@@ -48,23 +51,26 @@ def _insert_path(properties: Dict[str, Dict[str, Any]], parts: List[str], field_
     if not tail:
         if head in properties:
             existing = properties[head]
-            if existing.get('type') == 'object' and 'properties' in existing:
+            if existing.get('type') in CONTAINER_FIELD_TYPES and 'properties' in existing:
                 raise ValueError(
                     f"Cannot map '{path_str}' as a leaf field: "
-                    f"'{head}' is already an object with nested properties"
+                    f"'{head}' is already a nested field with child properties"
                 )
         properties[head] = {'type': field_type}
         return
 
     if head in properties:
         existing = properties[head]
-        if existing.get('type') != 'object' or 'properties' not in existing:
+        if existing.get('type') not in CONTAINER_FIELD_TYPES or 'properties' not in existing:
             raise ValueError(
                 f"Cannot have nested properties under '{head}': "
                 f"it is already mapped as type '{existing.get('type')}'"
             )
     else:
-        properties[head] = {'type': 'object', 'properties': {}}
+        properties[head] = {
+            'type': DEFAULT_CONTAINER_FIELD_TYPE,
+            'properties': {},
+        }
 
     _insert_path(properties[head]['properties'], tail, field_type)
 
@@ -75,7 +81,7 @@ def build_mapping_tree(
 ) -> Dict[str, Dict[str, Any]]:
     """Convert grouped YAML mapping format to OpenSearch mapping properties.
 
-    Dot notation in field names defines nested object paths (mapping only).
+    Dot notation in field names defines nested paths (mapping only).
 
     Args:
         fields_by_type: Dict mapping OpenSearch types to lists of field paths
@@ -141,11 +147,11 @@ def is_path_mapped(field_path: str, mapping: Dict[str, Dict[str, Any]]) -> bool:
         is_last = i == len(parts) - 1
 
         if is_last:
-            if cfg.get('type') == 'object' and 'properties' in cfg:
+            if cfg.get('type') in CONTAINER_FIELD_TYPES and 'properties' in cfg:
                 return True
             return cfg.get('type') is not None
 
-        if cfg.get('type') != 'object' or 'properties' not in cfg:
+        if cfg.get('type') not in CONTAINER_FIELD_TYPES or 'properties' not in cfg:
             return False
 
         current = cfg['properties']
@@ -168,7 +174,7 @@ def collect_mapped_leaf_paths(mapping: Dict[str, Dict[str, Any]], prefix: str = 
     for name, cfg in mapping.items():
         path = f"{prefix}.{name}" if prefix else name
 
-        if cfg.get('type') == 'object' and 'properties' in cfg:
+        if cfg.get('type') in CONTAINER_FIELD_TYPES and 'properties' in cfg:
             paths.update(collect_mapped_leaf_paths(cfg['properties'], path))
         else:
             paths.add(path)

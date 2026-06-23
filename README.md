@@ -131,7 +131,7 @@ Configuration values are resolved in the following order (highest to lowest prec
 
 ### Nested field mapping
 
-In each index's `mapping` block, use dot notation to declare nested object paths (up to `max_nesting_depth` levels, default 5):
+In each index's `mapping` block, use dot notation to declare nested paths (up to `max_nesting_depth` levels, default 5). Any parent field that contains child properties is mapped as OpenSearch `nested`:
 
 ```yaml
 mapping:
@@ -207,4 +207,3 @@ python -m opensearch_loader.cli --config config.yaml --verbose
 ## License
 
 [Add your license here]
-

@@ -291,7 +291,7 @@ class Loader:
         """Convert grouped YAML format to OpenSearch mapping format.
         
         Converts a mapping where fields are grouped by type into OpenSearch's
-        nested structure. Dot notation in mapping paths defines nested objects
+        nested structure. Dot notation in mapping paths defines nested fields
         (e.g. 'content.metadata.category' for up to max_nesting_depth levels).
         
         Args:
