@@ -20,7 +20,7 @@ class OpenSearchClient:
     def __init__(self, host: str, use_ssl: bool = False,
                  verify_certs: bool = False, username: Optional[str] = None,
                  password: Optional[str] = None,
-                 snapshot_poll_interval_seconds: float = 10,
+                 snapshot_poll_interval_seconds: float = 30,
                  snapshot_wait_timeout_seconds: float = 3600):
         """Initialize OpenSearch client.
         

@@ -12,7 +12,7 @@ class SnapshotAwareIndexDeletionTests(unittest.TestCase):
     def setUp(self):
         self.opensearch = object.__new__(OpenSearchClient)
         self.opensearch.client = MagicMock()
-        self.opensearch.snapshot_poll_interval_seconds = 10
+        self.opensearch.snapshot_poll_interval_seconds = 30
         self.opensearch.snapshot_wait_timeout_seconds = 3600
 
     @patch('opensearch_loader.opensearch_client.time.sleep')
@@ -33,7 +33,7 @@ class SnapshotAwareIndexDeletionTests(unittest.TestCase):
 
         self.opensearch.delete_index('diagnoses_table')
 
-        sleep.assert_called_once_with(10)
+        sleep.assert_called_once_with(30)
         self.assertEqual(self.opensearch.client.snapshot.status.call_count, 2)
         self.opensearch.client.indices.delete.assert_called_once_with(
             index='diagnoses_table'
@@ -88,7 +88,7 @@ class SnapshotAwareIndexDeletionTests(unittest.TestCase):
 
         self.opensearch.delete_index('samples_table')
 
-        sleep.assert_called_once_with(10)
+        sleep.assert_called_once_with(30)
         self.assertEqual(self.opensearch.client.indices.delete.call_count, 2)
 
     def test_does_not_retry_unrelated_delete_error(self):
