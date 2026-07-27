@@ -1,12 +1,15 @@
 """OpenSearch client for index management and document upsert."""
 
 import logging
+import time
 from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional
-from opensearchpy import OpenSearch, RequestsHttpConnection
+from opensearchpy import OpenSearch, RequestError, RequestsHttpConnection
 from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
+
+from .snapshot_utils import format_snapshot_names, is_snapshot_in_progress_error
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -16,7 +19,9 @@ class OpenSearchClient:
     
     def __init__(self, host: str, use_ssl: bool = False,
                  verify_certs: bool = False, username: Optional[str] = None,
-                 password: Optional[str] = None):
+                 password: Optional[str] = None,
+                 snapshot_poll_interval_seconds: float = 30,
+                 snapshot_wait_timeout_seconds: float = 3600):
         """Initialize OpenSearch client.
         
         Args:
@@ -25,7 +30,12 @@ class OpenSearchClient:
             verify_certs: Whether to verify SSL certificates
             username: Optional username for authentication
             password: Optional password for authentication
+            snapshot_poll_interval_seconds: Seconds between snapshot status checks
+            snapshot_wait_timeout_seconds: Maximum seconds to wait for snapshots
         """
+        self.snapshot_poll_interval_seconds = snapshot_poll_interval_seconds
+        self.snapshot_wait_timeout_seconds = snapshot_wait_timeout_seconds
+
         # Normalize host for OpenSearch library.
         # Accepts either full URL (e.g. http://host:9200) or hostname.
         parsed = urlparse(host)
@@ -85,16 +95,84 @@ class OpenSearchClient:
         return self.client.indices.exists(index=index_name)
     
     def delete_index(self, index_name: str):
-        """Delete an index.
+        """Delete an index after all active snapshots finish.
         
         Args:
             index_name: Name of the index to delete
         """
-        if self.index_exists(index_name):
-            self.client.indices.delete(index=index_name)
-            logger.info(f"Deleted index: {index_name}")
-        else:
+        if not self.index_exists(index_name):
             logger.info(f"Index does not exist, skipping deletion: {index_name}")
+            return
+
+        while True:
+            self.wait_for_snapshots_to_finish(index_name)
+
+            # The index could have been deleted by another process while this
+            # process was waiting for a snapshot to finish.
+            if not self.index_exists(index_name):
+                logger.info(f"Index no longer exists, skipping deletion: {index_name}")
+                return
+
+            try:
+                self.client.indices.delete(index=index_name)
+                logger.info(f"Deleted index: {index_name}")
+                return
+            except RequestError as e:
+                # A snapshot can start between the status check and the delete.
+                # Return to the wait loop for that race, but preserve all other
+                # OpenSearch request errors.
+                if is_snapshot_in_progress_error(e):
+                    logger.warning(
+                        f"A snapshot started before index {index_name} could be deleted. "
+                        "Waiting for it to finish before retrying."
+                    )
+                    continue
+                raise
+
+    def wait_for_snapshots_to_finish(self, index_name: str):
+        """Wait until OpenSearch reports no active snapshots.
+
+        Args:
+            index_name: Index whose pending deletion is being protected
+
+        Raises:
+            TimeoutError: If snapshots remain active longer than the configured timeout
+        """
+        wait_start = time.monotonic()
+        waited = False
+
+        while True:
+            response = self.client.snapshot.status()
+            active_snapshots = response.get('snapshots', [])
+
+            if not active_snapshots:
+                if waited:
+                    elapsed = time.monotonic() - wait_start
+                    logger.info(
+                        f"All OpenSearch snapshots finished after {elapsed:.1f} seconds. "
+                        f"Continuing deletion of index: {index_name}"
+                    )
+                return
+
+            elapsed = time.monotonic() - wait_start
+            if elapsed >= self.snapshot_wait_timeout_seconds:
+                snapshot_names = format_snapshot_names(active_snapshots)
+                raise TimeoutError(
+                    f"Timed out after {elapsed:.1f} seconds waiting to delete index "
+                    f"{index_name}; active OpenSearch snapshots: {snapshot_names}"
+                )
+
+            waited = True
+            snapshot_names = format_snapshot_names(active_snapshots)
+            sleep_seconds = min(
+                self.snapshot_poll_interval_seconds,
+                self.snapshot_wait_timeout_seconds - elapsed,
+            )
+            logger.info(
+                f"OpenSearch snapshot(s) in progress ({snapshot_names}). "
+                f"Waiting {sleep_seconds:g} seconds before deleting index: {index_name}"
+            )
+            time.sleep(sleep_seconds)
     
     def create_index(self, index_name: str, id_field: Optional[str] = None,
                      mapping: Optional[Dict[str, Any]] = None, force: bool = False):
