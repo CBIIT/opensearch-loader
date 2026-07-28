@@ -17,10 +17,10 @@ pull:
   - prefect.deployments.steps.git_clone:
       #id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-      branch: prefect
+      branch: prefect_update
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
-      directory: "/opt/prefect/opensearch-loader-prefect"
+      directory: "/opt/prefect/opensearch-loader-prefect_update"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
@@ -34,8 +34,13 @@ deployments:
     description: null
     schedule: {}
     flow_name: null
-    entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
+    entrypoint: opensearch_loader/prefect_cli_new.py:opensearch_loader_prefect
     parameters:
+      secret_name: ""
+      model_repo_url: "https://github.com/CBIIT/cds-model.git"
+      model_branch: "main"
+      mono_repo_url: "https://github.com/CBIIT/general-commons.git"
+      monorepo_branch: "main"
       about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
       indices_file: "backend/src/main/resources/yaml/indices.yaml"
       selected_indices: []
