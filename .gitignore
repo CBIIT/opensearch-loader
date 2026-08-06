@@ -129,6 +129,8 @@ dmypy.json
 # Project-specific
 config.yaml
 indices.yaml
+searchablePagesContent.yaml
 *.pyc
 .DS_Store
 logs/
+ccdi-dcc-model/
