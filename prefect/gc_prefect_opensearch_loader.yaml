@@ -36,7 +36,7 @@ deployments:
     parameters:
       model_branch: "1.0.0"
       backend_branch: "2.0.0"
-      frontend_branch: "2.0.0"
+      frontend_branch: "main"
       about_file: "src/content/dev/aboutPagesContent.yaml"
       indices_file: "src/main/resources/yaml/indices.yaml"
       selected_indices: []
