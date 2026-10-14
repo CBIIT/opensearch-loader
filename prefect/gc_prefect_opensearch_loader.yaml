@@ -35,7 +35,7 @@ deployments:
     entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
     parameters:
       model_branch: "1.0.0"
-      backend_branch: "2.0.0"
+      backend_branch: "main"
       frontend_branch: "main"
       about_file: "src/content/dev/aboutPagesContent.yaml"
       indices_file: "src/main/resources/yaml/indices.yaml"
