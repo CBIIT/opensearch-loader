@@ -49,7 +49,10 @@ class Loader:
             use_ssl=os_config.get('use_ssl', False),
             verify_certs=os_config.get('verify_certs', False),
             username=os_config.get('username'),
-            password=os_config.get('password')
+            password=os_config.get('password'),
+            timeout_seconds=os_config.get('timeout_seconds', 120),
+            max_retries=os_config.get('max_retries', 3),
+            bulk_batch_size=os_config.get('bulk_batch_size', 2000)
         )
         
         # Statistics tracking
@@ -829,6 +832,8 @@ class Loader:
                     query_display = query_name if query_name else 'unnamed'
                     logger.warning(f"Error processing page {page_num} for update query '{query_display}' in {index_name}, retrying: {e}")
                     try:
+                        # Brief backoff to let a loaded/timed-out cluster recover before retrying
+                        time.sleep(5)
                         if query_name:
                             logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
                         else:

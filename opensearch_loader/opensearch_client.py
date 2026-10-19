@@ -21,7 +21,10 @@ class OpenSearchClient:
                  verify_certs: bool = False, username: Optional[str] = None,
                  password: Optional[str] = None,
                  snapshot_poll_interval_seconds: float = 30,
-                 snapshot_wait_timeout_seconds: float = 3600):
+                 snapshot_wait_timeout_seconds: float = 3600,
+                 timeout_seconds: int = 120,
+                 max_retries: int = 3,
+                 bulk_batch_size: int = 2000):
         """Initialize OpenSearch client.
         
         Args:
@@ -32,9 +35,13 @@ class OpenSearchClient:
             password: Optional password for authentication
             snapshot_poll_interval_seconds: Seconds between snapshot status checks
             snapshot_wait_timeout_seconds: Maximum seconds to wait for snapshots
+            timeout_seconds: Per-request read timeout for OpenSearch calls
+            max_retries: Times opensearch-py retries a request on connection/timeout errors
+            bulk_batch_size: Number of documents sent per bulk request
         """
         self.snapshot_poll_interval_seconds = snapshot_poll_interval_seconds
         self.snapshot_wait_timeout_seconds = snapshot_wait_timeout_seconds
+        self.bulk_batch_size = bulk_batch_size
 
         # Normalize host for OpenSearch library.
         # Accepts either full URL (e.g. http://host:9200) or hostname.
@@ -52,7 +59,6 @@ class OpenSearchClient:
                 'scheme': 'https' if use_ssl else 'http',
             }
         hosts = [host_entry]
-        timeout_seconds = 60
         http_auth = (username, password) if username and password else None
 
         if 'amazonaws.com' in host:
@@ -69,7 +75,9 @@ class OpenSearchClient:
             verify_certs=verify_certs,
             ssl_show_warn=False,
             connection_class=RequestsHttpConnection,
-            timeout=timeout_seconds
+            timeout=timeout_seconds,
+            max_retries=max_retries,
+            retry_on_timeout=True
         )
 
         # Validate connectivity upfront to avoid false-positive "Connected" logs.
@@ -343,8 +351,8 @@ class OpenSearchClient:
             logger.warning("No updates to process")
             return
         
-        # Hard coded batch size for OpenSearch operations
-        BATCH_SIZE = 5000
+        # Batch size for OpenSearch bulk operations (configurable at client init)
+        BATCH_SIZE = self.bulk_batch_size
         
         # Process in batches
         total_updates = len(updates)
