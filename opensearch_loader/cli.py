@@ -51,6 +51,10 @@ def print_config(config: Config):
     selected_indices = config.get_selected_indices()
     if selected_indices:
         logger.info(f"  selected_indices: {selected_indices}")
+
+    selected_update_queries = config.get_selected_update_queries()
+    if selected_update_queries:
+        logger.info(f"  selected_update_queries: {selected_update_queries}")
     
     if config.get_test_mode():
         logger.info(f"  test_mode: {config.get_test_mode()}")
@@ -167,6 +171,12 @@ def parse_args():
         help='Comma-separated list of index names to load (overrides config and env). Only indices in this list will be processed.'
     )
     
+    parser.add_argument(
+        '--selected-update-queries',
+        type=str,
+        help='Comma-separated update query names to run against existing indices; skips initial queries and index creation/deletion'
+    )
+
     # About and model file settings
     parser.add_argument(
         '--about-file',
