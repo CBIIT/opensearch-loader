@@ -60,6 +60,7 @@ class Config:
             'OS_LOADER_CLEAR_EXISTING_INDICES': ('clear_existing_indices',),
             'OS_LOADER_ALLOW_INDEX_CREATION': ('allow_index_creation',),
             'OS_LOADER_SELECTED_INDICES': ('selected_indices',),
+            'OS_LOADER_SELECTED_UPDATE_QUERIES': ('selected_update_queries',),
             'OS_LOADER_ABOUT_FILE': ('about_file',),
             'OS_LOADER_MODEL_FILES': ('model_files',),
             'OS_LOADER_TEST_MODE': ('test_mode',),
@@ -71,7 +72,8 @@ class Config:
             if value is not None:
                 # Trim whitespace before parsing
                 value = value.strip()
-                parsed_value = self._parse_env_value(value)
+                parsed_value = (value if env_var == 'OS_LOADER_SELECTED_UPDATE_QUERIES'
+                                else self._parse_env_value(value))
                 if len(path) == 1:
                     self._set_nested(self.config, path[0], parsed_value)
                 else:
@@ -184,6 +186,9 @@ class Config:
             elif isinstance(args.selected_indices, list):
                 self.config['selected_indices'] = [v.strip() if isinstance(v, str) else v for v in args.selected_indices]
         
+        if getattr(args, 'selected_update_queries', None) is not None:
+            self.config['selected_update_queries'] = args.selected_update_queries
+
         if args.about_file:
             self.config['about_file'] = args.about_file.strip() if isinstance(args.about_file, str) else args.about_file
         
@@ -251,6 +256,20 @@ class Config:
         
         return None
     
+    def get_selected_update_queries(self) -> Optional[List[str]]:
+        """Return selected query names, or None for a normal full load."""
+        selected = self.config.get('selected_update_queries')
+        if selected is None:
+            return None
+        if isinstance(selected, str):
+            selected = selected.split(',')
+        if not isinstance(selected, list) or any(not isinstance(v, str) for v in selected):
+            raise ValueError('selected_update_queries must be a list or comma-separated string')
+        names = list(dict.fromkeys(name.strip() for name in selected if name.strip()))
+        if not names:
+            raise ValueError('selected_update_queries must contain at least one query name')
+        return names
+
     def get_about_file(self) -> Optional[str]:
         """Get about_file path."""
         return self.config.get('about_file')

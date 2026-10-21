@@ -116,6 +116,28 @@ Configuration values are resolved in the following order (highest to lowest prec
 
 ## How It Works
 
+To rerun specific update queries against an existing index:
+
+```bash
+python -m opensearch_loader.cli --config config.yaml \
+  --selected-indices cohorts --selected-update-queries diagnoses,exposures
+```
+
+Use the `name` values from `update_queries` in the index specification. Selection
+also accepts `selected_update_queries: [diagnoses, exposures]` in configuration
+YAML or `OS_LOADER_SELECTED_UPDATE_QUERIES=diagnoses,exposures`. Precedence is
+CLI, then environment, then YAML. Combine with `selected_indices` to limit which
+indices are considered; otherwise matching queries run across all query indices.
+Queries run in their specification order. Unknown names fail validation before
+processing indices; an empty selection is rejected. Omit the setting for a normal
+full load.
+
+When selecting update queries, the loader skips initial queries, index creation
+and deletion (even with `clear_existing_indices` enabled), and model/about-file
+indices. Target indices must already exist. Existing update/overwrite behavior
+is unchanged by query selection. The summary reports zero initial documents
+loaded in this mode; per-query logs report the updates processed.
+
 1. **Initial Query**: For each index, executes the initial query to fetch base documents from Memgraph
 2. **Document Creation**: Transforms query results to OpenSearch documents using direct field mapping and upserts them
 3. **Update Queries**: Executes each update query sequentially, merging new values into existing documents

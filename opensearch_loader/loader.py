@@ -155,6 +155,19 @@ class Loader:
         else:
             logger.info(f"Processing all {len(indices)} indices")
         
+        selected_queries = self.config.get_selected_update_queries()
+        if selected_queries:
+            query_indices = [index for index in indices
+                             if index.get('type') not in ('model', 'about_file')]
+            available = {query.get('name') for index in query_indices
+                         for query in index.get('update_queries', [])}
+            unknown = set(selected_queries) - available
+            if unknown:
+                raise ValueError(f"Unknown update query names: {', '.join(sorted(unknown))}")
+            indices = [index for index in query_indices
+                       if any(query.get('name') in selected_queries
+                              for query in index.get('update_queries', []))]
+
         # Initialize model if model_files are configured AND there are model indices to process
         model_files = self.config.get_model_files()
         if model_files:
@@ -474,6 +487,21 @@ class Loader:
             logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
             return 0
         
+        selected_queries = self.config.get_selected_update_queries()
+        if selected_queries:
+            update_queries = [query for query in index_config.get('update_queries', [])
+                              if query.get('name') in selected_queries]
+            if not update_queries:
+                logger.info(f"{index_name}: No selected update queries, skipping index")
+                return 0
+            if not self.opensearch.index_exists(index_name):
+                raise ValueError(f"Index {index_name} must exist to run selected update queries")
+            logger.info(f"{index_name}: Running selected updates against the existing index")
+            for update_query_config in update_queries:
+                self._process_update_query(index_name, id_field, update_query_config, parsed_mapping)
+            self.opensearch.refresh_index(index_name)
+            return 0  # No initial documents loaded in this mode.
+
         # Delete index if configured
         if self.config.get_clear_existing_indices():
             logger.info(f"Deleting index (if exists): {index_name}")
