@@ -116,7 +116,39 @@ Configuration values are resolved in the following order (highest to lowest prec
 
 ## How It Works
 
-To rerun specific update queries against an existing index:
+To select update queries per index in `config.yaml`:
+
+```yaml
+selected_indices:
+  - participants_table:
+      - sample_diagnosis_genetic_analysis_file_filters_direct_samples
+  - samples_table
+```
+
+An index followed by a colon and a nonempty query list runs only those updates
+against its existing documents. A plain index name without a colon, such as
+`samples_table` above, runs its normal full load, including the initial query and
+all update queries. Query names are validated against their own index before
+any indices are processed. Empty nested lists and unknown index/query names are
+rejected.
+
+The Prefect flow's `selected_indices` parameter accepts the same list, including
+mixed plain index names and per-index query lists. In the Prefect run form's JSON
+editor, enter:
+
+```json
+[
+  {"participants_table": ["sample_diagnosis_genetic_analysis_file_filters_direct_samples"]},
+  "samples_table"
+]
+```
+
+You can also use the YAML structure above under `deployments[].parameters` in
+`prefect/gc_prefect_opensearch_loader.yaml`. Prefect builds its configuration from
+flow parameters rather than reading the local `config.yaml`. After deploying the
+updated flow code, both paths use the same selection and validation logic.
+
+The global query-selection format is also supported:
 
 ```bash
 python -m opensearch_loader.cli --config config.yaml \
@@ -132,9 +164,15 @@ Queries run in their specification order. Unknown names fail validation before
 processing indices; an empty selection is rejected. Omit the setting for a normal
 full load.
 
+Use either per-index nested query lists or the global `selected_update_queries`
+setting; combining them is rejected. CLI and environment `selected_indices`
+overrides replace the YAML selection, including its nested query lists.
+
 When selecting update queries, the loader skips initial queries, index creation
 and deletion (even with `clear_existing_indices` enabled), and model/about-file
-indices. Target indices must already exist. Existing update/overwrite behavior
+indices. With per-index selection, this applies only to entries with nested query
+lists; plain entries retain their full-load behavior. Target indices for selected
+updates must already exist. Existing update/overwrite behavior
 is unchanged by query selection. The summary reports zero initial documents
 loaded in this mode; per-query logs report the updates processed.
 

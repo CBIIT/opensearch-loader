@@ -39,6 +39,11 @@ deployments:
       frontend_branch: "main"
       about_file: "src/content/dev/aboutPagesContent.yaml"
       indices_file: "src/main/resources/yaml/indices.yaml"
+      # Same structure as config.yaml: plain names for full loads, mappings
+      # with query-name lists for updates only. For example:
+      # selected_indices:
+      #   - participants_table:
+      #       - sample_diagnosis_genetic_analysis_file_filters_direct_samples
       selected_indices: []
     work_pool:
       name: ccdi-c3dc-16gb-prefect-3.2.14-python3.9

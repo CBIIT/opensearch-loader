@@ -49,6 +49,53 @@ class QuerySelectionConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     config.get_selected_update_queries()
 
+    def test_reads_nested_queries_and_plain_indices_from_yaml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.yaml'
+            path.write_text('''selected_indices:
+  - participants_table:
+      - diagnoses
+      - exposures
+  - samples_table
+''')
+            config = Config(str(path))
+        self.assertEqual(config.get_selected_indices(), ['participants_table', 'samples_table'])
+        self.assertEqual(config.get_selected_update_queries('participants_table'),
+                         ['diagnoses', 'exposures'])
+        self.assertIsNone(config.get_selected_update_queries('samples_table'))
+
+    def test_plain_index_without_colon_means_full_load(self):
+        config = Config()
+        config.config['selected_indices'] = yaml.safe_load('- participants_table')
+        self.assertEqual(config.get_selected_indices(), ['participants_table'])
+        self.assertIsNone(config.get_selected_update_queries('participants_table'))
+
+    def test_rejects_malformed_nested_selections(self):
+        for value in [[{'participants': []}], [{'participants': None}],
+                      [{'participants': 'first'}], [{'participants': [1]}],
+                      ['participants', {'participants': ['first']}], [False]]:
+            with self.subTest(value=value):
+                config = Config()
+                config.config['selected_indices'] = value
+                with self.assertRaises(ValueError):
+                    config.get_selected_indices()
+
+    def test_rejects_combining_global_and_nested_queries(self):
+        config = Config()
+        config.config.update({'selected_indices': [{'participants': ['first']}],
+                              'selected_update_queries': ['second']})
+        with self.assertRaisesRegex(ValueError, 'not both'):
+            config.get_selected_update_queries('participants')
+
+    def test_cli_index_selection_replaces_nested_yaml_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.yaml'
+            path.write_text('selected_indices:\n  - participants:\n      - first\n')
+            with patch('sys.argv', ['loader', '--selected-indices', 'samples']):
+                config = Config(str(path), parse_args())
+        self.assertEqual(config.get_selected_indices(), ['samples'])
+        self.assertIsNone(config.get_selected_update_queries('samples'))
+
 
 class QuerySelectionLoaderTests(unittest.TestCase):
     def setUp(self):
@@ -158,6 +205,65 @@ class QuerySelectionLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Unknown update query names: outside'):
                 self.run_load([self.spec, other])
             process.assert_not_called()
+
+    def test_different_nested_query_lists_are_scoped_to_each_index(self):
+        self.loader.config.config.pop('selected_update_queries')
+        self.loader.config.config['selected_indices'] = [
+            {'participants': ['first']}, {'other': ['second']},
+        ]
+        other = {**self.spec, 'index_name': 'other'}
+        with patch.object(self.loader, '_process_update_query') as update, \
+                patch.object(self.loader, '_print_summary'), \
+                patch.object(self.loader, '_save_query_timings'):
+            self.run_load([self.spec, other])
+        self.assertEqual([(call.args[0], call.args[2]['name'])
+                          for call in update.call_args_list],
+                         [('participants', 'first'), ('other', 'second')])
+        self.loader.opensearch.create_index.assert_not_called()
+        self.loader.opensearch.delete_index.assert_not_called()
+        self.loader.memgraph.execute_paginated_query.assert_not_called()
+
+    def test_mixed_plain_index_still_runs_full_load(self):
+        self.loader.config.config.pop('selected_update_queries')
+        self.loader.config.config['selected_indices'] = [{'participants': ['first']}, 'other']
+        self.loader.memgraph.execute_paginated_query.return_value = iter([
+            [{'id': 'p1', 'value': 'initial'}],
+        ])
+        other = {**self.spec, 'index_name': 'other'}
+        with patch.object(self.loader, '_process_update_query') as update, \
+                patch.object(self.loader, '_print_summary'), \
+                patch.object(self.loader, '_save_query_timings'):
+            self.run_load([self.spec, other])
+        self.assertEqual([(call.args[0], call.args[2]['name'])
+                          for call in update.call_args_list],
+                         [('participants', 'first'), ('other', 'first'),
+                          ('other', 'unselected'), ('other', 'second')])
+        self.loader.opensearch.create_index.assert_called_once()
+        self.assertEqual(self.loader.opensearch.create_index.call_args.args[0], 'other')
+        self.loader.opensearch.bulk_upsert.assert_called_once()
+
+    def test_nested_query_cannot_match_a_different_index(self):
+        self.loader.config.config.pop('selected_update_queries')
+        self.loader.config.config['selected_indices'] = [{'participants': ['outside']}, 'other']
+        other = {**self.spec, 'index_name': 'other',
+                 'update_queries': [{'name': 'outside', 'query': 'RETURN outside'}]}
+        with patch.object(self.loader, '_process_index') as process:
+            with self.assertRaisesRegex(ValueError, 'Unknown update query names for index participants'):
+                self.run_load([self.spec, other])
+            process.assert_not_called()
+
+    def test_nested_selection_rejects_unknown_and_non_query_indices(self):
+        self.loader.config.config.pop('selected_update_queries')
+        for name, indices, message in [
+            ('typo', [self.spec], 'Unknown selected index'),
+            ('model', [{'index_name': 'model', 'type': 'model'}], 'does not support'),
+        ]:
+            with self.subTest(name=name):
+                self.loader.config.config['selected_indices'] = [{name: ['first']}]
+                with patch.object(self.loader, '_process_index') as process:
+                    with self.assertRaisesRegex(ValueError, message):
+                        self.run_load(indices)
+                    process.assert_not_called()
 
 
 if __name__ == '__main__':

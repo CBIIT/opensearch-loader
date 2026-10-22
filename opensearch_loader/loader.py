@@ -139,6 +139,8 @@ class Loader:
             # Check for selected indices that don't exist and log warnings
             for selected_name in selected_set:
                 if selected_name not in index_map:
+                    if self.config.get_selected_update_queries(selected_name):
+                        raise ValueError(f"Unknown selected index: {selected_name}")
                     logger.warning(f"Selected index '{selected_name}' does not exist in indices file. Skipping.")
             
             # Filter indices to only those in selected_set
@@ -167,6 +169,20 @@ class Loader:
             indices = [index for index in query_indices
                        if any(query.get('name') in selected_queries
                               for query in index.get('update_queries', []))]
+
+        # Validate per-index query selections before processing any index.
+        for index_config in indices:
+            index_name = index_config.get('index_name', '').strip()
+            queries = self.config.get_selected_update_queries(index_name)
+            if not queries:
+                continue
+            if index_config.get('type') in ('model', 'about_file'):
+                raise ValueError(f"Index {index_name} does not support update queries")
+            if not selected_queries:
+                available = {query.get('name') for query in index_config.get('update_queries', [])}
+                unknown = set(queries) - available
+                if unknown:
+                    raise ValueError(f"Unknown update query names for index {index_name}: {', '.join(sorted(unknown))}")
 
         # Initialize model if model_files are configured AND there are model indices to process
         model_files = self.config.get_model_files()
@@ -487,7 +503,7 @@ class Loader:
             logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
             return 0
         
-        selected_queries = self.config.get_selected_update_queries()
+        selected_queries = self.config.get_selected_update_queries(index_name)
         if selected_queries:
             update_queries = [query for query in index_config.get('update_queries', [])
                               if query.get('name') in selected_queries]

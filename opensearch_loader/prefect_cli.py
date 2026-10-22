@@ -5,10 +5,11 @@ import logging
 import requests
 import subprocess
 import prefect.variables as Variables
-from typing import Literal, Optional, Dict, Any, List
+from typing import Literal, Optional, Dict, Any, List, Union
 from .cli import setup_logging, print_config
 from prefect import flow
 from .loader import Loader
+from .config import Config as LoaderConfig
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger, LOG_PREFIX, APP_NAME
 
@@ -26,7 +27,11 @@ ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
 log = get_logger('OpenSearchLoader')
 
-class Config:
+SelectedIndices = Optional[List[Union[str, Dict[str, List[str]]]]]
+
+
+class Config(LoaderConfig):
+    """Build configuration from flow parameters using shared loader semantics."""
     
     def __init__(self, memgraph_host, memgraph_port, memgraph_username, memgraph_password, opensearch_host, indices_file, about_file, model_files, selected_indices):
         self.config: Dict[str, Any] = {}
@@ -48,92 +53,6 @@ class Config:
 
         self.config = self._trim_config_values(self.config)
     
-    def _trim_config_values(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively trim whitespace from string values in configuration."""
-        if isinstance(config, dict):
-            return {k: self._trim_config_values(v) for k, v in config.items()}
-        elif isinstance(config, list):
-            return [self._trim_config_values(item) for item in config]
-        elif isinstance(config, str):
-            return config.strip()
-        else:
-            return config
-    
-    def _set_nested(self, d: Dict, key: str, value: Any):
-        """Set nested dictionary value."""
-        # Trim string values
-        if isinstance(value, str):
-            value = value.strip()
-        d[key] = value
-    
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value."""
-        return self.config.get(key, default)
-    
-    def get_memgraph_config(self) -> Dict[str, Any]:
-        """Get Memgraph configuration."""
-        return self.config.get('memgraph', {})
-    
-    def get_opensearch_config(self) -> Dict[str, Any]:
-        """Get OpenSearch configuration."""
-        return self.config.get('opensearch', {})
-    
-    def get_index_spec_file(self) -> Optional[str]:
-        """Get index specification file path."""
-        return self.config.get('index_spec_file')
-    
-    def get_clear_existing_indices(self) -> bool:
-        """Get clear_existing_indices setting."""
-        return self.config.get('clear_existing_indices', False)
-    
-    def get_allow_index_creation(self) -> bool:
-        """Get allow_index_creation setting."""
-        return self.config.get('allow_index_creation', True)
-    
-    def get_selected_indices(self) -> Optional[List[str]]:
-        """Get selected_indices setting.
-        
-        Returns a list of index names with whitespace trimmed, or None if not set or empty.
-        If None is returned, all indices should be processed.
-        """
-        selected = self.config.get('selected_indices')
-        if selected is None:
-            return None
-        
-        # Ensure it's a list and trim each value
-        if isinstance(selected, list):
-            # If empty list is provided, return None to process all indices
-            if not selected:
-                return None
-            # Trim each index name and filter out empty strings
-            trimmed = [v.strip() if isinstance(v, str) else str(v).strip() for v in selected if v]
-            # If all values were empty strings, return None to process all indices
-            return trimmed if trimmed else None
-        elif isinstance(selected, str):
-            # Handle string case (shouldn't happen with proper config, but defensive)
-            trimmed = selected.strip()
-            return [trimmed] if trimmed else None
-        
-        return None
-    
-    def get_about_file(self) -> Optional[str]:
-        """Get about_file path."""
-        return self.config.get('about_file')
-    
-    def get_model_files(self) -> Optional[List[str]]:
-        """Get model_files list."""
-        model_files = self.config.get('model_files')
-        if model_files is None:
-            return None
-        if isinstance(model_files, list):
-            return [v.strip() if isinstance(v, str) else str(v).strip() for v in model_files if v]
-        elif isinstance(model_files, str):
-            return [model_files.strip()] if model_files.strip() else None
-        return None
-    
-    def get_test_mode(self) -> bool:
-        return self.config.get('test_mode', False)
 
 def get_github_branches(repo_url):
     # Remove .git if present
@@ -197,8 +116,14 @@ def opensearch_loader_prefect(
     frontend_branch: frontend_branch_choices, # type: ignore
     about_file,
     indices_file,
-    selected_indices
+    selected_indices: SelectedIndices = None
 ):
+    """Load indices or run selected updates against existing indices.
+
+    Args:
+        selected_indices: Plain index names run full loads. Index-to-query-list
+            mappings run only those updates. An empty list selects all indices.
+    """
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
     model_repo = repo_download(model_repo_url, model_branch, logger)

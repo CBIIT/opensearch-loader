@@ -52,6 +52,9 @@ def print_config(config: Config):
     selected_indices = config.get_selected_indices()
     if selected_indices:
         logger.info(f"  selected_indices: {selected_indices}")
+        for index_name, queries in config.get_selected_index_queries().items():
+            if queries is not None:
+                logger.info(f"  {index_name} update queries: {queries}")
 
     selected_update_queries = config.get_selected_update_queries()
     if selected_update_queries:

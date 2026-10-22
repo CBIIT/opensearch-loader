@@ -231,36 +231,53 @@ class Config:
         return self.config.get('allow_index_creation', True)
     
     def get_selected_indices(self) -> Optional[List[str]]:
-        """Get selected_indices setting.
-        
-        Returns a list of index names with whitespace trimmed, or None if not set or empty.
-        If None is returned, all indices should be processed.
-        """
+        """Return index names from plain names or per-index query mappings."""
+        return list(self.get_selected_index_queries()) or None
+
+    def get_selected_index_queries(self) -> Dict[str, Optional[List[str]]]:
+        """Normalize selected_indices to index -> query names (None for full load)."""
         selected = self.config.get('selected_indices')
         if selected is None:
-            return None
-        
-        # Ensure it's a list and trim each value
-        if isinstance(selected, list):
-            # If empty list is provided, return None to process all indices
-            if not selected:
-                return None
-            # Trim each index name and filter out empty strings
-            trimmed = [v.strip() if isinstance(v, str) else str(v).strip() for v in selected if v]
-            # If all values were empty strings, return None to process all indices
-            return trimmed if trimmed else None
-        elif isinstance(selected, str):
-            # Handle string case (shouldn't happen with proper config, but defensive)
-            trimmed = selected.strip()
-            return [trimmed] if trimmed else None
-        
-        return None
+            return {}
+        if isinstance(selected, str):
+            selected = selected.split(',')
+        if not isinstance(selected, list):
+            raise ValueError('selected_indices must be a list or comma-separated string')
+        result = {}
+        for entry in selected:
+            if isinstance(entry, str):
+                if not entry.strip():
+                    continue
+                entries = {entry: None}
+            elif isinstance(entry, dict) and entry:
+                entries = entry
+            else:
+                raise ValueError('selected_indices entries must be index names or index-to-query mappings')
+            for name, queries in entries.items():
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError('Selected index names must be nonempty strings')
+                name = name.strip()
+                if name in result:
+                    raise ValueError(f'Duplicate selected index: {name}')
+                if isinstance(entry, dict):
+                    if not isinstance(queries, list):
+                        raise ValueError(f'Update queries for index {name} must be a nonempty list')
+                    queries = self._normalize_update_queries(queries)
+                result[name] = queries
+        return result
     
-    def get_selected_update_queries(self) -> Optional[List[str]]:
-        """Return selected query names, or None for a normal full load."""
+    def get_selected_update_queries(self, index_name: Optional[str] = None) -> Optional[List[str]]:
+        """Return per-index query names, with legacy global selection support."""
         selected = self.config.get('selected_update_queries')
-        if selected is None:
-            return None
+        index_queries = self.get_selected_index_queries()
+        if selected is not None:
+            if any(queries is not None for queries in index_queries.values()):
+                raise ValueError('Use nested selected_indices or selected_update_queries, not both')
+            return self._normalize_update_queries(selected)
+        return index_queries.get(index_name) if index_name is not None else None
+
+    @staticmethod
+    def _normalize_update_queries(selected) -> List[str]:
         if isinstance(selected, str):
             selected = selected.split(',')
         if not isinstance(selected, list) or any(not isinstance(v, str) for v in selected):
