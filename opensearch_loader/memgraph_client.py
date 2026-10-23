@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Any, Optional, Iterator
-from neo4j import GraphDatabase
+import mgclient
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -28,16 +28,24 @@ class MemgraphClient:
             username: Optional username
             password: Optional password
         """
-        uri = f"bolt://{host}:{port}"
-        auth = (username, password) if username and password else None
-        self.driver = GraphDatabase.driver(uri, auth=auth)
+        connect_kwargs = {
+            "host": host,
+            "port": int(port),
+        }
+        if username and password:
+            connect_kwargs["username"] = username
+            connect_kwargs["password"] = password
+        self.connection = mgclient.connect(**connect_kwargs)
+        # Read-only statements should not leave an open transaction.
+        self.connection.autocommit = True
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
-        logger.info(f"Connected to Memgraph at {uri}")
+        logger.info(f"Connected to Memgraph at {host}:{port}")
     
     def close(self):
         """Close the database connection."""
-        if self.driver:
-            self.driver.close()
+        if self.connection:
+            self.connection.close()
+            self.connection = None
     
     def validate_read_only(self, query: str) -> bool:
         """Validate that a query is read-only.
@@ -115,15 +123,22 @@ class MemgraphClient:
         
         parameters = parameters or {}
         
-        results = []
-        with self.driver.session() as session:
-            result = session.run(query, parameters)
-            for record in result:
-                # Convert record to dictionary
-                results.append(dict(record))
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(query, parameters)
+            results = self._rows_to_dicts(cursor)
+        finally:
+            cursor.close()
         
         logger.debug(f"Executed query, returned {len(results)} results")
         return results
+
+    def _rows_to_dicts(self, cursor) -> List[Dict[str, Any]]:
+        """Convert mgclient result rows into column-name dictionaries."""
+        if not cursor.description:
+            return []
+        columns = [column.name for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
                                page_size: int = 10000, index_name: Optional[str] = None,
