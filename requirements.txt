@@ -4,3 +4,4 @@ pyyaml>=6.0
 prefect
 boto3
 requests_aws4auth
+pymgclient
