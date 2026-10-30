@@ -28,19 +28,34 @@ class MemgraphClient:
             username: Optional username
             password: Optional password
         """
-        connect_kwargs = {
+        self._connect_kwargs = {
             "host": host,
             "port": int(port),
         }
         if username and password:
-            connect_kwargs["username"] = username
-            connect_kwargs["password"] = password
-        self.connection = mgclient.connect(**connect_kwargs)
-        # Read-only statements should not leave an open transaction.
-        self.connection.autocommit = True
+            self._connect_kwargs["username"] = username
+            self._connect_kwargs["password"] = password
+        self.connection = None
+        self._connect()
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
         logger.info(f"Connected to Memgraph at {host}:{port}")
-    
+
+    def _connect(self):
+        """Open a new connection using the stored connection parameters."""
+        self.connection = mgclient.connect(**self._connect_kwargs)
+        # Read-only statements should not leave an open transaction.
+        self.connection.autocommit = True
+
+    def _reconnect(self):
+        """Discard the current (presumed broken) connection and open a new one."""
+        if self.connection is not None:
+            try:
+                self.connection.close()
+            except Exception:
+                pass  # Connection is already broken; nothing to clean up
+            self.connection = None
+        self._connect()
+
     def close(self):
         """Close the database connection."""
         if self.connection:
@@ -122,16 +137,29 @@ class MemgraphClient:
         self.validate_pagination_params(query)
         
         parameters = parameters or {}
-        
+
+        try:
+            results = self._run(query, parameters)
+        except (mgclient.OperationalError, mgclient.InterfaceError) as e:
+            # Connection-level failure (e.g. Memgraph restarted, idle connection dropped).
+            # Reconnect and retry exactly once. Note: pymgclient raises OperationalError
+            # for all server-side errors, so a genuinely bad query will also be retried
+            # once before the same error propagates; this costs one round trip, nothing more.
+            logger.warning(f"Memgraph query failed, reconnecting and retrying once: {e}")
+            self._reconnect()
+            results = self._run(query, parameters)
+
+        logger.debug(f"Executed query, returned {len(results)} results")
+        return results
+
+    def _run(self, query: str, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute a query on the current connection and return rows as dictionaries."""
         cursor = self.connection.cursor()
         try:
             cursor.execute(query, parameters)
-            results = self._rows_to_dicts(cursor)
+            return self._rows_to_dicts(cursor)
         finally:
             cursor.close()
-        
-        logger.debug(f"Executed query, returned {len(results)} results")
-        return results
 
     def _rows_to_dicts(self, cursor) -> List[Dict[str, Any]]:
         """Convert mgclient result rows into column-name dictionaries."""
