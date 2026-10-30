@@ -36,15 +36,16 @@ class MemgraphClient:
             self._connect_kwargs["username"] = username
             self._connect_kwargs["password"] = password
         self.connection = None
-        self._connect()
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
-        logger.info(f"Connected to Memgraph at {host}:{port}")
 
     def _connect(self):
         """Open a new connection using the stored connection parameters."""
         self.connection = mgclient.connect(**self._connect_kwargs)
         # Read-only statements should not leave an open transaction.
         self.connection.autocommit = True
+        host = self._connect_kwargs["host"]
+        port = self._connect_kwargs["port"]
+        logger.info(f"Connected to Memgraph at {host}:{port}")
 
     def _reconnect(self):
         """Discard the current (presumed broken) connection and open a new one."""
@@ -154,12 +155,11 @@ class MemgraphClient:
 
     def _run(self, query: str, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Execute a query on the current connection and return rows as dictionaries."""
+        if self.connection is None:
+            self._connect()
         cursor = self.connection.cursor()
-        try:
-            cursor.execute(query, parameters)
-            return self._rows_to_dicts(cursor)
-        finally:
-            cursor.close()
+        cursor.execute(query, parameters)
+        return self._rows_to_dicts(cursor)
 
     def _rows_to_dicts(self, cursor) -> List[Dict[str, Any]]:
         """Convert mgclient result rows into column-name dictionaries."""
