@@ -43,9 +43,7 @@ class MemgraphClient:
         self.connection = mgclient.connect(**self._connect_kwargs)
         # Read-only statements should not leave an open transaction.
         self.connection.autocommit = True
-        host = self._connect_kwargs["host"]
-        port = self._connect_kwargs["port"]
-        logger.info(f"Connected to Memgraph at {host}:{port}")
+        logger.info("Connected to Memgraph")
 
     def _reconnect(self):
         """Discard the current (presumed broken) connection and open a new one."""
