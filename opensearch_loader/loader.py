@@ -1,5 +1,6 @@
 """Main loader orchestration logic."""
 
+import json
 import logging
 import time
 import os
@@ -14,6 +15,9 @@ from .memgraph_client import MemgraphClient
 from .opensearch_client import OpenSearchClient
 
 logger = logging.getLogger("OpenSearchLoader")
+
+# 
+OPENSEARCH_BATCH_BYTE_LIMIT = 15 * 1024 * 1024
 
 
 class Loader:
@@ -520,6 +524,7 @@ class Loader:
         
         return self.load_model(index_name, mapping, subtype)
     
+    
     def _process_query_index(self, index_config: Dict[str, Any]) -> int:
         """Process a query-based index (default behavior).
         
@@ -580,7 +585,7 @@ class Loader:
         total_documents = 0
         page_num = 0
         first_page_validated = False
-        
+        total_page_documents = []
         try:
             # Process pages incrementally
             # Note: Query execution time is tracked inside execute_paginated_query
@@ -603,25 +608,19 @@ class Loader:
                         # Validation failed - error already logged, skip entire index
                         return 0
                     first_page_validated = True
-                
-                # Process this page with retry logic
-                try:
-                    logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                    self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
-                    total_documents += len(page_documents)
-                    logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_documents)} documents (total: {total_documents})")
-                except Exception as e:
-                    # Retry once
-                    logger.warning(f"Error processing page {page_num} for {index_name}, retrying: {e}")
-                    try:
-                        logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                        self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
-                        total_documents += len(page_documents)
-                        logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_documents)} documents (total: {total_documents})")
-                    except Exception as retry_error:
-                        truncated_query = self._truncate_query(query)
-                        logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
-                        raise
+                total_page_documents.extend(page_documents)
+                if self._documents_byte_size(total_page_documents) > OPENSEARCH_BATCH_BYTE_LIMIT:
+                    total_documents, truncated_query = self._upsert_documents_with_retry(
+                        index_name, query_name, page_num, total_page_documents,
+                        id_field, query, total_documents
+                    )
+                    total_page_documents = []
+
+            if total_page_documents:
+                total_documents, truncated_query = self._upsert_documents_with_retry(
+                    index_name, query_name, page_num, total_page_documents,
+                    id_field, query, total_documents
+                )
             
             if total_documents == 0:
                 logger.warning(f"No documents returned from initial query for {index_name}")
@@ -657,6 +656,106 @@ class Loader:
             self.opensearch.refresh_index(index_name)
         
         return total_documents
+
+    def _upsert_documents_with_retry(self, index_name: str, query_name: str, page_num: int,
+                                     documents: List[Dict[str, Any]], id_field: str, query: str,
+                                     total_documents: int) -> int:
+        """Upsert documents, retrying once on failure.
+
+        Args:
+            index_name: Name of the OpenSearch index
+            query_name: Query name used in log messages
+            page_num: Page number used in log messages
+            documents: Documents to upsert
+            id_field: Field name to use as document ID
+            query: Cypher query, included in the error log if the retry fails
+            total_documents: Running count of documents loaded so far
+
+        Returns:
+            Updated document count after a successful upsert
+
+        Raises:
+            Exception: If the retry also fails
+        """
+        truncated_query = None
+        total_documents = 0
+        try:
+            logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(documents)} documents")
+            self.opensearch.bulk_upsert(index_name, documents, id_field, query_name=query_name)
+            total_documents += len(documents)
+            logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(documents)} documents (total: {total_documents})")
+        except Exception as e:
+            logger.warning(f"Error processing page {page_num} for {index_name}, retrying: {e}")
+            try:
+                logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(documents)} documents")
+                self.opensearch.bulk_upsert(index_name, documents, id_field, query_name=query_name)
+                total_documents += len(documents)
+                logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(documents)} documents (total: {total_documents})")
+            except Exception as retry_error:
+                truncated_query = self._truncate_query(query)
+                logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
+                raise
+        finally:
+            return total_documents, truncated_query
+
+    def _update_documents_with_retry(self, index_name: str, query_name: str, page_num: int,
+                                     updates: List[Dict[str, Any]], id_field: str, query: str,
+                                     total_updates: int) -> int:
+        """Update documents, retrying once on failure.
+
+        Args:
+            index_name: Name of the OpenSearch index
+            query_name: Query name used in log messages
+            page_num: Page number used in log messages
+            updates: Documents to update
+            id_field: Field name to use as document ID
+            query: Cypher query, included in the error log if the retry fails
+            total_updates: Running count of updates loaded so far
+
+        Returns:
+            Updated count after a successful update
+
+        Raises:
+            Exception: If the retry also fails
+        """
+        truncated_query = None
+        try:
+            if query_name:
+                logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(updates)} updates")
+            else:
+                logger.info(f"{index_name}: Loading page {page_num} to OpenSearch: {len(updates)} updates")
+            self.opensearch.bulk_update(index_name, updates, id_field, query_name=query_name)
+            total_updates += len(updates)
+            if query_name:
+                logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(updates)} updates (total: {total_updates})")
+            else:
+                logger.info(f"{index_name}: Completed loading page {page_num} to OpenSearch: {len(updates)} updates (total: {total_updates})")
+        except Exception as e:
+            query_display = query_name if query_name else 'unnamed'
+            logger.warning(f"Error processing page {page_num} for update query '{query_display}' in {index_name}, retrying: {e}")
+            try:
+                if query_name:
+                    logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(updates)} updates")
+                else:
+                    logger.info(f"{index_name}: Retrying loading page {page_num} to OpenSearch: {len(updates)} updates")
+                self.opensearch.bulk_update(index_name, updates, id_field, query_name=query_name)
+                total_updates += len(updates)
+                if query_name:
+                    logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(updates)} updates (total: {total_updates})")
+                else:
+                    logger.info(f"{index_name}: Retry successful for page {page_num}: {len(updates)} updates (total: {total_updates})")
+            except Exception as retry_error:
+                query_display = query_name if query_name else 'unnamed'
+                truncated_query = self._truncate_query(query)
+                logger.error(f"Retry failed for page {page_num} for update query '{query_display}' in {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
+                raise
+        return total_updates, truncated_query
+
+    def _documents_byte_size(self, documents: List[Dict[str, Any]]) -> int:
+        """Return the UTF-8 JSON size of a document list in bytes."""
+        if not documents:
+            return 0
+        return len(json.dumps(documents, default=str).encode("utf-8"))
     
     def load_about_page(self, index_name: str, mapping: Dict[str, Any], file_name: str) -> int:
         """Load about page content from YAML file.
@@ -866,6 +965,7 @@ class Loader:
         
         # Get test_mode setting
         test_mode = self.config.get_test_mode()
+        total_update_pages = []
         
         try:
             # Process pages incrementally
@@ -887,39 +987,20 @@ class Loader:
                         # Validation failed - error already logged, raise to skip entire index
                         raise ValueError(f"Update query '{query_name}' returned unmapped fields. Skipping entire index.")
                     first_page_validated = True
-                
-                # Process this page with retry logic
-                try:
-                    if query_name:
-                        logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                    else:
-                        logger.info(f"{index_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                    self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
-                    total_updates += len(page_updates)
-                    if query_name:
-                        logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
-                    else:
-                        logger.info(f"{index_name}: Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
-                except Exception as e:
-                    # Retry once
-                    query_display = query_name if query_name else 'unnamed'
-                    logger.warning(f"Error processing page {page_num} for update query '{query_display}' in {index_name}, retrying: {e}")
-                    try:
-                        if query_name:
-                            logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                        else:
-                            logger.info(f"{index_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                        self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
-                        total_updates += len(page_updates)
-                        if query_name:
-                            logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
-                        else:
-                            logger.info(f"{index_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
-                    except Exception as retry_error:
-                        query_display = query_name if query_name else 'unnamed'
-                        truncated_query = self._truncate_query(query)
-                        logger.error(f"Retry failed for page {page_num} for update query '{query_display}' in {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
-                        raise
+                total_update_pages.extend(page_updates)
+                # if the total size of the documents is greater than the UPDATE_BATCH_BYTE_LIMIT, update the documents in a batch
+                if self._documents_byte_size(total_update_pages) > OPENSEARCH_BATCH_BYTE_LIMIT:
+                    total_updates, _ = self._update_documents_with_retry(
+                        index_name, query_name, page_num, total_update_pages,
+                        id_field, query, total_updates
+                    )
+                    total_update_pages = []
+
+            if total_update_pages:
+                total_updates, _ = self._update_documents_with_retry(
+                    index_name, query_name, page_num, total_update_pages,
+                    id_field, query, total_updates
+                )
             
             if total_updates == 0:
                 if query_name:
