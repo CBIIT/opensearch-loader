@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Any, Optional, Iterator
-from neo4j import GraphDatabase
+import mgclient
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -28,16 +28,38 @@ class MemgraphClient:
             username: Optional username
             password: Optional password
         """
-        uri = f"bolt://{host}:{port}"
-        auth = (username, password) if username and password else None
-        self.driver = GraphDatabase.driver(uri, auth=auth)
+        self._connect_kwargs = {
+            "host": host,
+            "port": int(port),
+        }
+        if username and password:
+            self._connect_kwargs["username"] = username
+            self._connect_kwargs["password"] = password
+        self.connection = None
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
-        logger.info(f"Connected to Memgraph at {uri}")
-    
+
+    def _connect(self):
+        """Open a new connection using the stored connection parameters."""
+        self.connection = mgclient.connect(**self._connect_kwargs)
+        # Read-only statements should not leave an open transaction.
+        self.connection.autocommit = True
+        logger.info("Connected to Memgraph")
+
+    def _reconnect(self):
+        """Discard the current (presumed broken) connection and open a new one."""
+        if self.connection is not None:
+            try:
+                self.connection.close()
+            except Exception:
+                pass  # Connection is already broken; nothing to clean up
+            self.connection = None
+        self._connect()
+
     def close(self):
         """Close the database connection."""
-        if self.driver:
-            self.driver.close()
+        if self.connection:
+            self.connection.close()
+            self.connection = None
     
     def validate_read_only(self, query: str) -> bool:
         """Validate that a query is read-only.
@@ -114,16 +136,35 @@ class MemgraphClient:
         self.validate_pagination_params(query)
         
         parameters = parameters or {}
-        
-        results = []
-        with self.driver.session() as session:
-            result = session.run(query, parameters)
-            for record in result:
-                # Convert record to dictionary
-                results.append(dict(record))
-        
+
+        try:
+            results = self._run(query, parameters)
+        except (mgclient.OperationalError, mgclient.InterfaceError) as e:
+            # Connection-level failure (e.g. Memgraph restarted, idle connection dropped).
+            # Reconnect and retry exactly once. Note: pymgclient raises OperationalError
+            # for all server-side errors, so a genuinely bad query will also be retried
+            # once before the same error propagates; this costs one round trip, nothing more.
+            logger.warning(f"Memgraph query failed, reconnecting and retrying once: {e}")
+            self._reconnect()
+            results = self._run(query, parameters)
+
         logger.debug(f"Executed query, returned {len(results)} results")
         return results
+
+    def _run(self, query: str, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute a query on the current connection and return rows as dictionaries."""
+        if self.connection is None:
+            self._connect()
+        cursor = self.connection.cursor()
+        cursor.execute(query, parameters)
+        return self._rows_to_dicts(cursor)
+
+    def _rows_to_dicts(self, cursor) -> List[Dict[str, Any]]:
+        """Convert mgclient result rows into column-name dictionaries."""
+        if not cursor.description:
+            return []
+        columns = [column.name for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
     def execute_paginated_query(self, query: str, parameters: Optional[Dict[str, Any]] = None,
                                page_size: int = 10000, index_name: Optional[str] = None,

@@ -17,10 +17,10 @@ pull:
   - prefect.deployments.steps.git_clone:
       #id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-      branch: prefect_update
+      branch: mgclient_update
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
-      directory: "/opt/prefect/opensearch-loader-prefect_update"
+      directory: "/opt/prefect/opensearch-loader-mgclient_update"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
