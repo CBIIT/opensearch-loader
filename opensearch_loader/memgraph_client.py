@@ -38,7 +38,7 @@ class MemgraphClient:
         self.connection = None
         self._connect()
         self.last_query_time = 0.0  # Track total query execution time for last paginated query
-        logger.info(f"Connected to Memgraph at {host}:{port}")
+        logger.info("Connected to Memgraph")
 
     def _connect(self):
         """Open a new connection using the stored connection parameters."""
