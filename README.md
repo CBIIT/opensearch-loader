@@ -75,7 +75,7 @@ indices:
 
 ### Prefect DCC Shared Pool
 
-The `gc-data-integrated-dashboard-new-opensearch-loader` deployment in
+The `c3dc-opensearch-loader` deployment in
 [prefect/gc_prefect_opensearch_loader.yaml](prefect/gc_prefect_opensearch_loader.yaml)
 uses `ccdi-dcc-16gb-prefect-3.4.19-python3.13`, replacing the C3DC pool running
 Prefect 3.2.14 and Python 3.9. The flow entrypoint and source branch remain
@@ -109,7 +109,7 @@ After pushing the source changes, update the Prefect deployment separately:
 
 ```bash
 prefect deploy --prefect-file prefect/gc_prefect_opensearch_loader.yaml \
-  --name gc-data-integrated-dashboard-new-opensearch-loader
+  --name c3dc-opensearch-loader
 ```
 
 Verify the deployment's pool and parameters in Prefect, then run a controlled

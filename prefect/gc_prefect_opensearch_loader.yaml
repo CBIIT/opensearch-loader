@@ -26,7 +26,7 @@ pull:
 
 # the deployments section allows you to provide configuration for deploying flows
 deployments:
-  - name: gc-data-integrated-dashboard-new-opensearch-loader
+  - name: c3dc-opensearch-loader
     version: null
     tags: []
     description: null
