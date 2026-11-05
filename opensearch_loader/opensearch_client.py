@@ -4,14 +4,37 @@ import logging
 import time
 from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional
+import boto3
 from opensearchpy import OpenSearch, RequestError, RequestsHttpConnection
 from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
+from botocore.credentials import RefreshableCredentials
 from botocore.session import Session
 
 from .snapshot_utils import format_snapshot_names, is_snapshot_in_progress_error
 
 logger = logging.getLogger("OpenSearchLoader")
+
+
+def _assumed_role_credentials(role_arn: str) -> RefreshableCredentials:
+    """Credentials for role_arn that re-assume the role before they expire."""
+    sts = boto3.client('sts')
+
+    def fetch() -> Dict[str, Any]:
+        creds = sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='PrefectOpenSearchLoader'
+        )['Credentials']
+        return {
+            'access_key': creds['AccessKeyId'],
+            'secret_key': creds['SecretAccessKey'],
+            'token': creds['SessionToken'],
+            'expiry_time': creds['Expiration'].isoformat(),
+        }
+
+    return RefreshableCredentials.create_from_metadata(
+        metadata=fetch(), refresh_using=fetch, method='sts-assume-role'
+    )
 
 
 class OpenSearchClient:
@@ -24,7 +47,8 @@ class OpenSearchClient:
                  snapshot_wait_timeout_seconds: float = 3600,
                  timeout_seconds: int = 120,
                  max_retries: int = 3,
-                 bulk_batch_size: int = 2000):
+                 bulk_batch_size: int = 2000,
+                 operations_role_arn: Optional[str] = None):
         """Initialize OpenSearch client.
         
         Args:
@@ -38,6 +62,8 @@ class OpenSearchClient:
             timeout_seconds: Per-request read timeout for OpenSearch calls
             max_retries: Times opensearch-py retries a request on connection/timeout errors
             bulk_batch_size: Number of documents sent per bulk request
+            operations_role_arn: Optional IAM role to assume for signing requests to
+                AWS-hosted OpenSearch; task credentials are used when empty
         """
         self.snapshot_poll_interval_seconds = snapshot_poll_interval_seconds
         self.snapshot_wait_timeout_seconds = snapshot_wait_timeout_seconds
@@ -62,8 +88,10 @@ class OpenSearchClient:
         http_auth = (username, password) if username and password else None
 
         if 'amazonaws.com' in host:
+            credentials = (_assumed_role_credentials(operations_role_arn)
+                           if operations_role_arn else Session().get_credentials())
             http_auth = AWS4Auth(
-                refreshable_credentials=Session().get_credentials(),
+                refreshable_credentials=credentials,
                 region='us-east-1',
                 service='es'
             )

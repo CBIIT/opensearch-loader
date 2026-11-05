@@ -25,6 +25,7 @@ FRONTEND_REPO_URL = "frontend_repo_url"
 ENVIRONMENTS = "environments"
 ES_HOST = "es_host"
 MEMGRAPH_PORT = 7687
+OPERATIONS_ROLE_VARIABLE = "aws_operations_role"
 log = get_logger('OpenSearchLoader')
 
 SelectedIndices = Optional[List[Union[str, Dict[str, List[str]]]]]
@@ -33,7 +34,7 @@ SelectedIndices = Optional[List[Union[str, Dict[str, List[str]]]]]
 class Config(LoaderConfig):
     """Build configuration from flow parameters using shared loader semantics."""
     
-    def __init__(self, memgraph_host, memgraph_port, memgraph_username, memgraph_password, opensearch_host, indices_file, about_file, model_files, selected_indices):
+    def __init__(self, memgraph_host, memgraph_port, memgraph_username, memgraph_password, opensearch_host, indices_file, about_file, model_files, selected_indices, operations_role_arn=None):
         self.config: Dict[str, Any] = {}
         self.config["memgraph"] = {}
         self.config["opensearch"] = {}
@@ -44,6 +45,7 @@ class Config(LoaderConfig):
         self.config["opensearch"]["host"] = opensearch_host
         self.config["opensearch"]["use_ssl"] = True
         self.config["opensearch"]["verify_certs"] = True
+        self.config["opensearch"]["operations_role_arn"] = operations_role_arn
         self.config["index_spec_file"] = indices_file
         self.config["clear_existing_indices"] = False
         self.config["allow_index_creation"] = True
@@ -97,6 +99,17 @@ def repo_download(repo, version, logger):
     logger.info(f"Finished cloning the data model repository from {repo} to {repo_folder}")
     return repo_folder
 
+
+def resolve_operations_role(aws_operations_role):
+    # Empty means "use task credentials" unless the Prefect variable is set.
+    if not aws_operations_role:
+        try:
+            aws_operations_role = Variables.get(OPERATIONS_ROLE_VARIABLE) or ""
+        except Exception as e:
+            log.info(f"No {OPERATIONS_ROLE_VARIABLE} Prefect variable found: {e}")
+            aws_operations_role = ""
+    return aws_operations_role or None
+
 config_file = DROP_DOWN_CONFIG
 with open(config_file, 'r') as file:
     config_drop_list = yaml.safe_load(file)
@@ -116,7 +129,8 @@ def opensearch_loader_prefect(
     frontend_branch: frontend_branch_choices, # type: ignore
     about_file,
     indices_file,
-    selected_indices: SelectedIndices = None
+    selected_indices: SelectedIndices = None,
+    aws_operations_role: str = ""
 ):
     """Load indices or run selected updates against existing indices.
 
@@ -150,7 +164,8 @@ def opensearch_loader_prefect(
         indices_file=indices_file_path,
         about_file=about_file_path,
         model_files=model_files,
-        selected_indices=selected_indices
+        selected_indices=selected_indices,
+        operations_role_arn=resolve_operations_role(aws_operations_role)
     )
     print_config(config)
     loader = Loader(config)

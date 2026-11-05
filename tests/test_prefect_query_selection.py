@@ -84,6 +84,45 @@ class PrefectQuerySelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build_config([{'participants_table': []}]).get_selected_indices()
 
+    def test_explicit_operations_role_takes_precedence(self):
+        with patch.object(self.module, 'Variables') as variables:
+            role = self.module.resolve_operations_role('arn:aws:iam::123456789012:role/operations')
+        self.assertEqual(role, 'arn:aws:iam::123456789012:role/operations')
+        variables.get.assert_not_called()
+
+    def test_operations_role_falls_back_to_prefect_variable(self):
+        with patch.object(self.module, 'Variables') as variables:
+            variables.get.return_value = 'arn:aws:iam::123456789012:role/operations'
+            role = self.module.resolve_operations_role('')
+        self.assertEqual(role, variables.get.return_value)
+        variables.get.assert_called_once_with('aws_operations_role')
+
+    def test_missing_operations_role_uses_task_credentials(self):
+        for result in [None, '']:
+            with self.subTest(result=result), patch.object(self.module, 'Variables') as variables:
+                variables.get.return_value = result
+                self.assertIsNone(self.module.resolve_operations_role(''))
+        with patch.object(self.module, 'Variables') as variables:
+            variables.get.side_effect = RuntimeError('Prefect unavailable')
+            self.assertIsNone(self.module.resolve_operations_role(''))
+
+    def test_flow_passes_explicit_operations_role_to_loader(self):
+        role = 'arn:aws:iam::123456789012:role/operations'
+        secret = {self.module.ES_HOST: 'https://localhost:9200',
+                  self.module.MEMGRAPH_ENDPOINT: 'localhost',
+                  self.module.MEMGRAPH_USER: 'user', self.module.MEMGRAPH_PASSWORD: 'test'}
+        with patch.object(self.module, 'repo_download', return_value='repository'), \
+                patch.object(self.module.glob, 'glob', return_value=[]), \
+                patch.object(self.module, 'Variables') as variables, \
+                patch.object(self.module, 'get_secret', return_value=secret), \
+                patch.object(self.module, 'setup_logging'), \
+                patch.object(self.module, 'print_config'), \
+                patch.object(self.module, 'Loader') as loader:
+            variables.get.return_value = 'secret-name'
+            self.module.opensearch_loader_prefect.fn(
+                **self.flow_parameters(), aws_operations_role=role)
+        self.assertEqual(loader.call_args.args[0].config['opensearch']['operations_role_arn'], role)
+
 
 if __name__ == '__main__':
     unittest.main()

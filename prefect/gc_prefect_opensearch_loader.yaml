@@ -34,6 +34,7 @@ deployments:
     flow_name: null
     entrypoint: opensearch_loader/prefect_cli.py:opensearch_loader_prefect
     parameters:
+      environment: "dev_cdk"
       model_branch: "1.0.0"
       backend_branch: "main"
       frontend_branch: "main"
@@ -45,8 +46,10 @@ deployments:
       #   - participants_table:
       #       - sample_diagnosis_genetic_analysis_file_filters_direct_samples
       selected_indices: []
+      # Operations role: assumed by the Prefect flow to sign OpenSearch API requests.
+      aws_operations_role: "arn:aws:iam::624882275043:role/power-user-prefect-operations"
     work_pool:
-      name: ccdi-c3dc-16gb-prefect-3.2.14-python3.9
+      name: ccdi-dcc-16gb-prefect-3.4.19-python3.13
       work_queue_name: default
       job_variables:
         env:

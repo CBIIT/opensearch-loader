@@ -1,11 +1,62 @@
-"""Tests for snapshot-aware OpenSearch index deletion."""
+"""Tests for OpenSearch authentication and snapshot-aware index deletion."""
 
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock, call, patch
 
 from opensearchpy import RequestError
 
-from opensearch_loader.opensearch_client import OpenSearchClient
+from opensearch_loader.opensearch_client import OpenSearchClient, _assumed_role_credentials
+
+
+class OpenSearchAuthenticationTests(unittest.TestCase):
+    def test_assumed_credentials_can_refresh(self):
+        role = 'arn:aws:iam::123456789012:role/operations'
+        expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+        with patch('opensearch_loader.opensearch_client.boto3.client') as client:
+            client.return_value.assume_role.side_effect = [
+                {'Credentials': {'AccessKeyId': 'first-key', 'SecretAccessKey': 'first-secret',
+                                 'SessionToken': 'first-token', 'Expiration': expiration}},
+                {'Credentials': {'AccessKeyId': 'next-key', 'SecretAccessKey': 'next-secret',
+                                 'SessionToken': 'next-token', 'Expiration': expiration}},
+            ]
+            credentials = _assumed_role_credentials(role)
+            self.assertEqual(credentials.get_frozen_credentials().access_key, 'first-key')
+            credentials._expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+            refreshed = credentials.get_frozen_credentials()
+        client.assert_called_once_with('sts')
+        self.assertEqual(client.return_value.assume_role.call_args_list, [
+            call(RoleArn=role, RoleSessionName='PrefectOpenSearchLoader'),
+            call(RoleArn=role, RoleSessionName='PrefectOpenSearchLoader'),
+        ])
+        self.assertEqual(refreshed.access_key, 'next-key')
+        self.assertEqual(refreshed.secret_key, 'next-secret')
+        self.assertEqual(refreshed.token, 'next-token')
+
+    def test_aws_signing_uses_selected_credentials(self):
+        for role in [None, 'arn:aws:iam::123456789012:role/operations']:
+            with self.subTest(role=role), \
+                    patch('opensearch_loader.opensearch_client.OpenSearch'), \
+                    patch('opensearch_loader.opensearch_client.AWS4Auth') as auth, \
+                    patch('opensearch_loader.opensearch_client.Session') as session, \
+                    patch('opensearch_loader.opensearch_client._assumed_role_credentials') as assume:
+                OpenSearchClient('https://search-example.us-east-1.es.amazonaws.com',
+                                 operations_role_arn=role)
+                credentials = (assume.return_value if role
+                               else session.return_value.get_credentials.return_value)
+                auth.assert_called_once_with(refreshable_credentials=credentials,
+                                             region='us-east-1', service='es')
+                if role:
+                    assume.assert_called_once_with(role)
+                    session.assert_not_called()
+                else:
+                    assume.assert_not_called()
+
+    def test_local_opensearch_does_not_assume_role(self):
+        with patch('opensearch_loader.opensearch_client.OpenSearch'), \
+                patch('opensearch_loader.opensearch_client._assumed_role_credentials') as assume:
+            OpenSearchClient('http://localhost:9200', operations_role_arn='unused-role')
+        assume.assert_not_called()
 
 
 class SnapshotAwareIndexDeletionTests(unittest.TestCase):

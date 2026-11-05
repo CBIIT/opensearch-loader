@@ -73,6 +73,51 @@ indices:
 
 ## Usage
 
+### Prefect DCC Shared Pool
+
+The `gc-data-integrated-dashboard-new-opensearch-loader` deployment in
+[prefect/gc_prefect_opensearch_loader.yaml](prefect/gc_prefect_opensearch_loader.yaml)
+uses `ccdi-dcc-16gb-prefect-3.4.19-python3.13`, replacing the C3DC pool running
+Prefect 3.2.14 and Python 3.9. The flow entrypoint and source branch remain
+unchanged. `environment: dev_cdk` selects the Prefect variable
+`gc_memgraph_secret_name_dev_cdk_id`, whose value names the Secrets Manager
+secret containing Memgraph connection details and the OpenSearch host.
+
+The shared worker's AWS identity may differ from the old worker's identity.
+For AWS-hosted OpenSearch, the deployment explicitly sets `aws_operations_role`
+to `arn:aws:iam::624882275043:role/power-user-prefect-operations`. The flow passes
+this role through its configuration to the OpenSearch client, which calls STS
+`AssumeRole` and signs requests with temporary credentials that refresh before
+expiration. Role selection is: nonempty flow parameter, then the Prefect variable
+`aws_operations_role`, then the worker's default AWS credentials. A blank flow
+parameter does not bypass a configured Prefect variable.
+
+Role assumption applies only to OpenSearch requests, not Secrets Manager calls.
+Before deploying, confirm:
+
+- The shared worker can call `sts:AssumeRole` on the operations role, and the
+  operations role's trust policy permits that worker identity.
+- The assumed role is authorized by the OpenSearch domain policy and, when
+  enabled, fine-grained access control for the loader's operations.
+- The shared worker can read the environment's Secrets Manager secret and
+  decrypt it when a customer-managed KMS key requires that permission.
+- The pool has network access to STS, Secrets Manager, Memgraph, OpenSearch,
+  GitHub, and the package source used by the pull-time requirements install.
+- OpenSearch is in `us-east-1`, the region currently used by the request signer.
+
+After pushing the source changes, update the Prefect deployment separately:
+
+```bash
+prefect deploy --prefect-file prefect/gc_prefect_opensearch_loader.yaml \
+  --name gc-data-integrated-dashboard-new-opensearch-loader
+```
+
+Verify the deployment's pool and parameters in Prefect, then run a controlled
+load against the intended environment to verify live IAM and connectivity.
+`selected_indices: []` selects all indices, so choose a limited index when
+validating. A Git push alone does not update the registered deployment.
+Local tests mock AWS and cannot certify the pool image or live infrastructure.
+
 ### Command Line
 
 Basic usage:

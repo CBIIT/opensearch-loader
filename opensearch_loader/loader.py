@@ -52,7 +52,8 @@ class Loader:
             password=os_config.get('password'),
             timeout_seconds=os_config.get('timeout_seconds', 120),
             max_retries=os_config.get('max_retries', 3),
-            bulk_batch_size=os_config.get('bulk_batch_size', 2000)
+            bulk_batch_size=os_config.get('bulk_batch_size', 2000),
+            operations_role_arn=os_config.get('operations_role_arn')
         )
         
         # Statistics tracking
