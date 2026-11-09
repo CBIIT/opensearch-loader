@@ -30,7 +30,10 @@ def opensearch_loader_prefect(
     monorepo_branch,
     about_file,
     indices_file,
-    selected_indices
+    selected_indices,
+    streaming: bool = True,
+    stream_batch_size: int = 1000,
+    stream_queue_batches: int = 10,
 ):
     secret = get_secret(secret_name)
     setup_logging(verbose=False)
@@ -64,6 +67,9 @@ def opensearch_loader_prefect(
         "clear_existing_indices": False,
         "allow_index_creation": True,
         "selected_indices": selected_indices,
+        "streaming": streaming,
+        "stream_batch_size": stream_batch_size,
+        "stream_queue_batches": stream_queue_batches,
         "about_file": about_file_path,
         "model_files": model_files,
     }

@@ -176,3 +176,42 @@ python -m opensearch_loader.cli --config config.yaml --verbose
 
 [Add your license here]
 
+
+
+### Streaming query timing
+
+Query-based indices default to `streaming: true`. The reader executes each query
+once with the supported `SKIP $skip LIMIT $limit` pair removed and fetches 1,000
+records per batch using the Neo4j Bolt driver. Other pagination forms are rejected
+rather than silently rewritten. Queries must have scalar/list/map projections
+compatible with the existing OpenSearch documents; graph entity objects are not
+converted to pymgclient objects.
+
+A single reader thread feeds an in-process FIFO (`stream_queue_batches: 10`).
+The calling thread performs all OpenSearch writes synchronously, retaining the
+existing 15 MiB write buffer and initial-creation barrier. There are no parallel
+write workers, Kafka service, or update coalescing. Queue capacity limits batch
+count, not bytes; a large result row can still use significant memory. The queue
+is temporary and does not support restart/resume. Closing a stream waits for any
+in-flight database call before joining its reader.
+
+Prefect flow parameters: `streaming=true`, `stream_batch_size=1000`,
+`stream_queue_batches=10`. Set `selected_indices=["dashboard_file"]` to scope a
+run. Set `streaming=false` to compare with the existing SKIP/LIMIT implementation.
+The same settings are supported in config YAML; environment overrides are
+`OS_LOADER_STREAMING`, `OS_LOADER_STREAM_BATCH_SIZE`, and
+`OS_LOADER_STREAM_QUEUE_BATCHES`.
+
+Each query emits INFO logs under `OpenSearchLoader`:
+
+- `STREAM_METRICS`: `read_fetch_s` (client run/fetch time, including network),
+  `queue_put_wait_s` (producer enqueue time), `queue_get_wait_s` (consumer dequeue
+  time), and `stream_wall_s` (stream lifetime through reader cleanup).
+- `QUERY_METRICS`: `status`, `wall_s` (query phase including final buffered writes),
+  `read_fetch_s`, and `write_s` (OpenSearch helper calls including retries).
+
+Read/write activity overlaps, so these times must not be added to estimate wall
+clock time. Queue measurements include small call overhead and are not pure DB
+execution times. Query wall time excludes index creation and refresh. Failed or
+interrupted work logs partial timing. Existing Prefect deployment settings forward
+the `OpenSearchLoader` logger to Prefect logs.

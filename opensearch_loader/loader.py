@@ -1,6 +1,8 @@
 """Main loader orchestration logic."""
 
 import json
+from contextlib import closing
+from functools import wraps
 import logging
 import time
 import os
@@ -18,6 +20,19 @@ logger = logging.getLogger("OpenSearchLoader")
 
 # 
 OPENSEARCH_BATCH_BYTE_LIMIT = 15 * 1024 * 1024
+
+
+def timed_write(method):
+    """Count wall time including retries; writes remain synchronous."""
+    @wraps(method)
+    def measured(self, index_name, query_name, *args, **kwargs):
+        started = time.monotonic()
+        try:
+            return method(self, index_name, query_name, *args, **kwargs)
+        finally:
+            key = f'{index_name}:{query_name}'
+            self._write_seconds[key] += time.monotonic() - started
+    return measured
 
 
 class Loader:
@@ -53,12 +68,22 @@ class Loader:
         
         # Statistics tracking
         self.index_stats: List[Dict[str, Any]] = []
+        self._write_seconds = defaultdict(float)
         # Query timing: key is "index:query_name", value is list of execution times
         self.query_timings: Dict[str, List[float]] = defaultdict(list)
         
         # Model instance (initialized if model_files are configured)
         self.model = None
     
+    def _query_batches(self, query, parameters, page_size, **context):
+        if self.config.get('streaming', True):
+            return self.memgraph.execute_streaming_query(
+                query, parameters=parameters,
+                batch_size=self.config.get('stream_batch_size', 1000),
+                queue_batches=self.config.get('stream_queue_batches', 10), **context)
+        return self.memgraph.execute_paginated_query(
+            query, parameters=parameters, page_size=page_size, **context)
+
     def close(self):
         """Close all client connections."""
         self.memgraph.close()
@@ -342,16 +367,16 @@ class Loader:
                     parts = field.split('.')
                     if len(parts) != 2:
                         raise ValueError(f"Nested properties must use single-level dot notation (e.g., 'content.title'), got: '{field}'")
-                    
+
                     parent_obj, prop_name = parts[0], parts[1]
-                    
+
                     # Track nested properties
                     if parent_obj not in nested_fields:
                         nested_fields[parent_obj] = {'fields': set(), 'properties': {}}
-                    
+
                     if prop_name in nested_fields[parent_obj]['fields']:
                         raise ValueError(f"Duplicate nested property: '{field}'")
-                    
+
                     nested_fields[parent_obj]['fields'].add(prop_name)
                     nested_fields[parent_obj]['properties'][prop_name] = {'type': field_type}
                 else:
@@ -586,35 +611,39 @@ class Loader:
         page_num = 0
         first_page_validated = False
         total_page_documents = []
+        phase_started = time.monotonic()
+        self._write_seconds[query_key] = 0.0
+        phase_status = 'failed'
         try:
             # Process pages incrementally
             # Note: Query execution time is tracked inside execute_paginated_query
             # and will be available in self.memgraph.last_query_time after the loop
             # Note: Initial queries always run completely (test_mode=False), even in test mode.
             # Only update queries are limited to one page in test mode.
-            for page_documents in self.memgraph.execute_paginated_query(
+            with closing(self._query_batches(
                 query, parameters=variables, page_size=page_size,
                 index_name=index_name, query_name=query_name,
                 test_mode=False
-            ):
-                page_num += 1
-                
-                if not page_documents:
-                    continue
-                
-                # Validate fields on first page only
-                if not first_page_validated:
-                    if not self._validate_query_fields(index_name, page_documents, parsed_mapping):
-                        # Validation failed - error already logged, skip entire index
-                        return 0
-                    first_page_validated = True
-                total_page_documents.extend(page_documents)
-                if self._documents_byte_size(total_page_documents) > OPENSEARCH_BATCH_BYTE_LIMIT:
-                    total_documents, truncated_query = self._upsert_documents_with_retry(
-                        index_name, query_name, page_num, total_page_documents,
-                        id_field, query, total_documents
-                    )
-                    total_page_documents = []
+            )) as batches:
+                for page_documents in batches:
+                    page_num += 1
+
+                    if not page_documents:
+                        continue
+
+                    # Validate fields on first page only
+                    if not first_page_validated:
+                        if not self._validate_query_fields(index_name, page_documents, parsed_mapping):
+                            # Validation failed - error already logged, skip entire index
+                            return 0
+                        first_page_validated = True
+                    total_page_documents.extend(page_documents)
+                    if self._documents_byte_size(total_page_documents) > OPENSEARCH_BATCH_BYTE_LIMIT:
+                        total_documents, truncated_query = self._upsert_documents_with_retry(
+                            index_name, query_name, page_num, total_page_documents,
+                            id_field, query, total_documents
+                        )
+                        total_page_documents = []
 
             if total_page_documents:
                 total_documents, truncated_query = self._upsert_documents_with_retry(
@@ -622,6 +651,7 @@ class Loader:
                     id_field, query, total_documents
                 )
             
+            phase_status = 'complete'
             if total_documents == 0:
                 logger.warning(f"No documents returned from initial query for {index_name}")
                 # Index was already created before processing pages, so no need to create again
@@ -632,6 +662,9 @@ class Loader:
             logger.error(f"Error executing initial query for {index_name}: {e}. Query: {truncated_query}. Skipping to next query.")
             raise
         finally:
+            logger.info('%s: QUERY_METRICS status=%s wall_s=%.3f read_fetch_s=%.3f write_s=%.3f',
+                        query_key, phase_status, time.monotonic() - phase_started,
+                        self.memgraph.last_query_time, self._write_seconds[query_key])
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
             # This is set after the generator is exhausted
             query_duration = self.memgraph.last_query_time
@@ -657,6 +690,7 @@ class Loader:
         
         return total_documents
 
+    @timed_write
     def _upsert_documents_with_retry(self, index_name: str, query_name: str, page_num: int,
                                      documents: List[Dict[str, Any]], id_field: str, query: str,
                                      total_documents: int) -> int:
@@ -678,7 +712,6 @@ class Loader:
             Exception: If the retry also fails
         """
         truncated_query = None
-        total_documents = 0
         try:
             logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(documents)} documents")
             self.opensearch.bulk_upsert(index_name, documents, id_field, query_name=query_name)
@@ -695,9 +728,9 @@ class Loader:
                 truncated_query = self._truncate_query(query)
                 logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
                 raise
-        finally:
-            return total_documents, truncated_query
+        return total_documents, truncated_query
 
+    @timed_write
     def _update_documents_with_retry(self, index_name: str, query_name: str, page_num: int,
                                      updates: List[Dict[str, Any]], id_field: str, query: str,
                                      total_updates: int) -> int:
@@ -856,7 +889,7 @@ class Loader:
                     # Skip relationship based properties
                     if "@relation" in prop.get(PROP_TYPE, ''):
                         continue
-                    
+
                     if subtype == 'property':
                         yield {
                             'id': f"{node_name}_{prop_name}",
@@ -966,35 +999,39 @@ class Loader:
         # Get test_mode setting
         test_mode = self.config.get_test_mode()
         total_update_pages = []
+        phase_started = time.monotonic()
+        self._write_seconds[query_key] = 0.0
+        phase_status = 'failed'
         
         try:
             # Process pages incrementally
             # Note: Query execution time is tracked inside execute_paginated_query
             # and will be available in self.memgraph.last_query_time after the loop
-            for page_updates in self.memgraph.execute_paginated_query(
+            with closing(self._query_batches(
                 query, parameters=variables, page_size=page_size,
                 index_name=index_name, query_name=query_name,
                 test_mode=test_mode
-            ):
-                page_num += 1
-                
-                if not page_updates:
-                    continue
-                
-                # Validate fields on first page
-                if not first_page_validated:
-                    if not self._validate_query_fields(index_name, page_updates, mapping):
-                        # Validation failed - error already logged, raise to skip entire index
-                        raise ValueError(f"Update query '{query_name}' returned unmapped fields. Skipping entire index.")
-                    first_page_validated = True
-                total_update_pages.extend(page_updates)
-                # if the total size of the documents is greater than the UPDATE_BATCH_BYTE_LIMIT, update the documents in a batch
-                if self._documents_byte_size(total_update_pages) > OPENSEARCH_BATCH_BYTE_LIMIT:
-                    total_updates, _ = self._update_documents_with_retry(
-                        index_name, query_name, page_num, total_update_pages,
-                        id_field, query, total_updates
-                    )
-                    total_update_pages = []
+            )) as batches:
+                for page_updates in batches:
+                    page_num += 1
+
+                    if not page_updates:
+                        continue
+
+                    # Validate fields on first page
+                    if not first_page_validated:
+                        if not self._validate_query_fields(index_name, page_updates, mapping):
+                            # Validation failed - error already logged, raise to skip entire index
+                            raise ValueError(f"Update query '{query_name}' returned unmapped fields. Skipping entire index.")
+                        first_page_validated = True
+                    total_update_pages.extend(page_updates)
+                    # if the total size of the documents is greater than the UPDATE_BATCH_BYTE_LIMIT, update the documents in a batch
+                    if self._documents_byte_size(total_update_pages) > OPENSEARCH_BATCH_BYTE_LIMIT:
+                        total_updates, _ = self._update_documents_with_retry(
+                            index_name, query_name, page_num, total_update_pages,
+                            id_field, query, total_updates
+                        )
+                        total_update_pages = []
 
             if total_update_pages:
                 total_updates, _ = self._update_documents_with_retry(
@@ -1002,6 +1039,7 @@ class Loader:
                     id_field, query, total_updates
                 )
             
+            phase_status = 'complete'
             if total_updates == 0:
                 if query_name:
                     logger.info(f"{index_name}:{query_name}: No updates returned from query")
@@ -1018,6 +1056,9 @@ class Loader:
             logger.error(f"Index {index_name}: Update query '{query_display}' returned unmapped fields. Query: {truncated_query}. Skipping entire index.")
             raise
         finally:
+            logger.info('%s: QUERY_METRICS status=%s wall_s=%.3f read_fetch_s=%.3f write_s=%.3f',
+                        query_key, phase_status, time.monotonic() - phase_started,
+                        self.memgraph.last_query_time, self._write_seconds[query_key])
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
             # This is set after the generator is exhausted
             query_duration = self.memgraph.last_query_time

@@ -36,3 +36,8 @@ allow_index_creation: true  # Allow creation of indices if they don't exist (uni
 #   - "/path/to/model-desc/cds-model.yml"
 #   - "/path/to/model-desc/cds-model-props.yml"
 
+
+# Stream each query once into a bounded in-process FIFO; writes remain serial.
+streaming: true
+stream_batch_size: 1000
+stream_queue_batches: 10

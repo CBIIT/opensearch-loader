@@ -5,6 +5,7 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Iterator
 import mgclient
+from neo4j import GraphDatabase
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -35,6 +36,7 @@ class MemgraphClient:
         if username and password:
             connect_kwargs["username"] = username
             connect_kwargs["password"] = password
+        self.connect_kwargs = connect_kwargs.copy()
         self.connection = mgclient.connect(**connect_kwargs)
         # Read-only statements should not leave an open transaction.
         self.connection.autocommit = True
@@ -210,4 +212,72 @@ class MemgraphClient:
         # This will be available after the generator is exhausted
         self.last_query_time = total_query_time
         logger.debug(f"Executed paginated query, yielded {total_results} total results across pages")
+
+
+    def execute_streaming_query(self, query, parameters=None, batch_size=1000,
+                                queue_batches=10, test_mode=False, **context):
+        """One lazy query on a producer-owned connection; bounded FIFO results.
+
+        Closing the returned generator cancels queue production and joins the
+        producer. An in-flight database call may wait until the server timeout.
+        Query time counts execute/fetch time, not queue backpressure.
+        """
+        from .streaming import queued_batches, without_pagination
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("stream_batch_size must be a positive integer")
+        self.validate_read_only(query)
+        statement = without_pagination(query)
+        params = {k: v for k, v in (parameters or {}).items()
+                  if k.lower() not in ('skip', 'limit')}
+        self.last_query_time = 0.0
+
+        def read():
+            host = self.connect_kwargs['host']
+            if ':' in host and not host.startswith('['):
+                host = f'[{host}]'
+            uri = f"bolt://{host}:{self.connect_kwargs['port']}"
+            username = self.connect_kwargs.get('username')
+            auth = ((username, self.connect_kwargs['password'])
+                    if username else None)
+            # fetch_size controls Bolt PULL n on the wire. pymgclient's lazy
+            # fetchmany instead loops over PULL 1 and is much slower remotely.
+            # Driver/session live entirely on the producer thread.
+            with GraphDatabase.driver(uri, auth=auth) as driver:
+                with driver.session(fetch_size=batch_size) as session:
+                    started = time.monotonic()
+                    try:
+                        result = session.run(statement, params)
+                    finally:
+                        self.last_query_time += time.monotonic() - started
+                    while True:
+                        started = time.monotonic()
+                        try:
+                            records = result.fetch(batch_size)
+                        finally:
+                            self.last_query_time += time.monotonic() - started
+                        if not records:
+                            break
+                        yield [dict(record) for record in records]
+                        if test_mode:
+                            break
+
+        metrics = {}
+        started = time.monotonic()
+        status = 'interrupted'
+        logger.info('%s:%s: Starting stream batch_size=%s queue_batches=%s',
+                    context.get('index_name', ''), context.get('query_name', ''),
+                    batch_size, queue_batches)
+        try:
+            yield from queued_batches(read, queue_batches, metrics=metrics)
+            status = 'complete'
+        except Exception:
+            status = 'failed'
+            raise
+        finally:
+            logger.info(
+                '%s:%s: STREAM_METRICS status=%s read_fetch_s=%.3f '
+                'queue_put_wait_s=%.3f queue_get_wait_s=%.3f stream_wall_s=%.3f',
+                context.get('index_name', ''), context.get('query_name', ''), status,
+                self.last_query_time, metrics.get('put_wait_s', 0),
+                metrics.get('get_wait_s', 0), time.monotonic() - started)
 

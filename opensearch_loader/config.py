@@ -61,6 +61,9 @@ class Config:
             'OS_LOADER_ABOUT_FILE': ('about_file',),
             'OS_LOADER_MODEL_FILES': ('model_files',),
             'OS_LOADER_TEST_MODE': ('test_mode',),
+            'OS_LOADER_STREAMING': ('streaming',),
+            'OS_LOADER_STREAM_BATCH_SIZE': ('stream_batch_size',),
+            'OS_LOADER_STREAM_QUEUE_BATCHES': ('stream_queue_batches',),
         }
         
         for env_var, path in env_mapping.items():
@@ -68,7 +71,8 @@ class Config:
             if value is not None:
                 # Trim whitespace before parsing
                 value = value.strip()
-                parsed_value = self._parse_env_value(value)
+                parsed_value = (int(value) if env_var in ('OS_LOADER_STREAM_BATCH_SIZE', 'OS_LOADER_STREAM_QUEUE_BATCHES')
+                                else self._parse_env_value(value))
                 if len(path) == 1:
                     self._set_nested(self.config, path[0], parsed_value)
                 else:
