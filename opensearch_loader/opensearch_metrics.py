@@ -2,6 +2,40 @@
 import json
 import threading
 from contextlib import contextmanager
+from urllib.parse import quote
+
+
+def log_index_settings(client, logger, index_name):
+    """Log only performance-related settings, including effective defaults."""
+    keys = (
+        'index.refresh_interval', 'index.number_of_shards',
+        'index.number_of_replicas', 'index.auto_expand_replicas',
+        'index.translog.durability', 'index.translog.sync_interval',
+        'index.translog.flush_threshold_size',
+        'index.merge.scheduler.max_thread_count',
+        'index.codec', 'index.routing.allocation.total_shards_per_node',
+    )
+    try:
+        response = client.transport.perform_request(
+            'GET', '/' + quote(index_name, safe='') + '/_settings',
+            params={'include_defaults': 'true', 'flat_settings': 'true'}, timeout=7)
+        for name, values in response.items():
+            explicit = values.get('settings', {})
+            defaults = values.get('defaults', {})
+            selected = {}
+            for key in keys:
+                if key in explicit:
+                    selected[key] = {'value': explicit[key], 'source': 'settings'}
+                elif key in defaults:
+                    selected[key] = {'value': defaults[key], 'source': 'defaults'}
+                else:
+                    selected[key] = {'value': None, 'source': 'unavailable'}
+            logger.info('OPENSEARCH_INDEX_SETTINGS %s', json.dumps(
+                {'index': name, 'settings': selected}, sort_keys=True))
+    except Exception as exc:
+        # Diagnostic failures must not interrupt loading or expose response bodies.
+        logger.warning('OPENSEARCH_INDEX_SETTINGS unavailable index=%s error_type=%s status=%s',
+                       index_name, type(exc).__name__, getattr(exc, 'status_code', None))
 
 
 @contextmanager

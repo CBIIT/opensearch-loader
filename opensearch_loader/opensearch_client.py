@@ -7,6 +7,7 @@ from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
 from .bulk_metrics import MeasuredBulkClient
+from .opensearch_metrics import log_index_settings
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -126,6 +127,7 @@ class OpenSearchClient:
             self.client.indices.create(index=index_name, body=body)
         else:
             logger.warning(f"Index already exists: {index_name}. Skipping creation. Use force=True to recreate.")
+        log_index_settings(self.client, logger, index_name)
     
     def refresh_index(self, index_name: str):
         """Refresh an index to make all operations visible.
