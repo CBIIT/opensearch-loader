@@ -17,10 +17,10 @@ pull:
   - prefect.deployments.steps.git_clone:
       #id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
-      branch: mgclient_update
+      branch: mgclient_update_test
       include_submodules: True
   - prefect.deployments.steps.set_working_directory:
-      directory: "/opt/prefect/opensearch-loader-mgclient_update"
+      directory: "/opt/prefect/opensearch-loader-mgclient_update_test"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
       directory: "{{ clone-step.directory }}"
@@ -44,6 +44,35 @@ deployments:
       about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
       indices_file: "backend/src/main/resources/yaml/indices.yaml"
       selected_indices: []
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
+      job_variables:
+        env:
+          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader"
+
+
+
+  - name: gc-data-hub-opensearch-loader-streaming-dev
+    version: null
+    tags: []
+    description: null
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/prefect_cli_new.py:opensearch_loader_prefect
+    parameters:
+      secret_name: ""
+      model_repo_url: "https://github.com/CBIIT/cds-model.git"
+      model_branch: "main"
+      mono_repo_url: "https://github.com/CBIIT/general-commons.git"
+      monorepo_branch: "main"
+      about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
+      indices_file: "backend/src/main/resources/yaml/indices.yaml"
+      selected_indices: []
+      streaming: true
+      benchmark_fraction: 1.0
+      stream_batch_size: 1000
+      stream_queue_batches: 10
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
