@@ -213,7 +213,7 @@ class OpenSearchClient:
             actions.append(action)
         
         if actions:
-            success, failed = bulk(self.client, actions, refresh=False)
+            success, failed = bulk(self.client, actions, refresh=False, chunk_size=2000)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk upserted {success} documents")
             elif index_name:
@@ -305,7 +305,7 @@ class OpenSearchClient:
         
         # Execute bulk update
         try:
-            success, failed = bulk(self.client, actions, refresh=False)
+            success, failed = bulk(self.client, actions, refresh=False, chunk_size=2000)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk updated {success} documents")
             elif index_name:
