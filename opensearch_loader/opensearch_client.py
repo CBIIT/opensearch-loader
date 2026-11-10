@@ -17,6 +17,7 @@ logger = logging.getLogger("OpenSearchLoader")
 
 # Explicit HTTP chunk size; the helper otherwise defaults to 500 actions.
 BULK_CHUNK_SIZE = 5000
+UPDATE_WORKERS = 4
 
 
 class OpenSearchClient:
@@ -254,11 +255,11 @@ class OpenSearchClient:
             return
         
         # The same normalized OpenSearch ID always belongs to one serial lane.
-        # Wait for both lanes before returning so callers retain phase/retry barriers.
-        lanes = [[], []]
+        # Wait for all lanes before returning so callers retain phase/retry barriers.
+        lanes = [[] for _ in range(UPDATE_WORKERS)]
         for update in updates:
             doc_id = str(update.get(id_field))
-            lanes[zlib.crc32(doc_id.encode('utf-8')) % 2].append(update)
+            lanes[zlib.crc32(doc_id.encode('utf-8')) % UPDATE_WORKERS].append(update)
         stopped = Event()
         started = time.monotonic()
 
@@ -276,16 +277,16 @@ class OpenSearchClient:
 
         status = 'failed'
         try:
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='opensearch-update') as pool:
+            with ThreadPoolExecutor(max_workers=UPDATE_WORKERS, thread_name_prefix='opensearch-update') as pool:
                 futures = [pool.submit(write_lane, rows) for rows in lanes if rows]
                 for future in futures:
                     future.result()
             status = 'complete'
         finally:
             logger.info(
-                '%s:%s: UPDATE_WORKER_METRICS status=%s workers=2 '
+                '%s:%s: UPDATE_WORKER_METRICS status=%s workers=%s '
                 'lane_rows=%s wall_s=%.3f chunk_size=%s',
-                index_name, query_name, status, [len(rows) for rows in lanes],
+                index_name, query_name, status, UPDATE_WORKERS, [len(rows) for rows in lanes],
                 time.monotonic() - started, BULK_CHUNK_SIZE)
 
     def _process_update_batch(self, index_name: str, updates: List[Dict[str, Any]], id_field: str,
