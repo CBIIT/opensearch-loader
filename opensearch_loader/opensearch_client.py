@@ -6,6 +6,7 @@ from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
+from .bulk_metrics import MeasuredBulkClient
 
 logger = logging.getLogger("OpenSearchLoader")
 
@@ -217,7 +218,8 @@ class OpenSearchClient:
         
         if actions:
             success, failed = bulk(
-                self.client, actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
+                MeasuredBulkClient(self.client, index_name, query_name, "index"),
+                actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk upserted {success} documents")
             elif index_name:
@@ -310,7 +312,8 @@ class OpenSearchClient:
         # Execute bulk update
         try:
             success, failed = bulk(
-                self.client, actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
+                MeasuredBulkClient(self.client, index_name, query_name, "update"),
+                actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk updated {success} documents")
             elif index_name:
