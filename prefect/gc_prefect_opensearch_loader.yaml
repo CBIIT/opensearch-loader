@@ -71,6 +71,7 @@ deployments:
       indices_file: "backend/src/main/resources/yaml/indices.yaml"
       selected_indices: []
       streaming: true
+      benchmark_fraction: 1.0
       stream_batch_size: 1000
       stream_queue_batches: 10
     work_pool:
