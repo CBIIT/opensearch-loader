@@ -9,6 +9,9 @@ from botocore.session import Session
 
 logger = logging.getLogger("OpenSearchLoader")
 
+# Explicit HTTP chunk size; the helper otherwise defaults to 500 actions.
+BULK_CHUNK_SIZE = 5000
+
 
 class OpenSearchClient:
     """Client for managing OpenSearch indices and documents."""
@@ -213,7 +216,8 @@ class OpenSearchClient:
             actions.append(action)
         
         if actions:
-            success, failed = bulk(self.client, actions, refresh=False)
+            success, failed = bulk(
+                self.client, actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk upserted {success} documents")
             elif index_name:
@@ -242,7 +246,7 @@ class OpenSearchClient:
             return
         
         # Hard coded batch size for OpenSearch operations
-        BATCH_SIZE = 5000
+        BATCH_SIZE = BULK_CHUNK_SIZE
         
         # Process in batches
         total_updates = len(updates)
@@ -305,7 +309,8 @@ class OpenSearchClient:
         
         # Execute bulk update
         try:
-            success, failed = bulk(self.client, actions, refresh=False)
+            success, failed = bulk(
+                self.client, actions, refresh=False, chunk_size=BULK_CHUNK_SIZE)
             if index_name and query_name:
                 logger.debug(f"{index_name}:{query_name}: Bulk updated {success} documents")
             elif index_name:
