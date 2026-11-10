@@ -176,6 +176,10 @@ class Loader:
         else:
             logger.info(f"Processing all {len(indices)} indices")
         
+        from .benchmark import prepare_benchmark
+        indices = prepare_benchmark(
+            indices, self.config.get('benchmark_fraction', 1.0), self.memgraph, logger)
+
         # Initialize model if model_files are configured AND there are model indices to process
         model_files = self.config.get_model_files()
         if model_files:

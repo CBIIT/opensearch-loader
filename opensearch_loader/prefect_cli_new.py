@@ -5,6 +5,7 @@ from .config import Config
 import logging
 from prefect import flow, get_run_logger
 from .hardware_metrics import hardware_monitor
+from .opensearch_metrics import opensearch_monitor
 from .prefect_cli import repo_download
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger
@@ -35,6 +36,7 @@ def opensearch_loader_prefect(
     streaming: bool = True,
     stream_batch_size: int = 1000,
     stream_queue_batches: int = 10,
+    benchmark_fraction: float = 1.0,
 ):
     with hardware_monitor(get_run_logger()):
         secret = get_secret(secret_name)
@@ -69,6 +71,7 @@ def opensearch_loader_prefect(
             "clear_existing_indices": False,
             "allow_index_creation": True,
             "selected_indices": selected_indices,
+            "benchmark_fraction": benchmark_fraction,
             "streaming": streaming,
             "stream_batch_size": stream_batch_size,
             "stream_queue_batches": stream_queue_batches,
@@ -84,8 +87,9 @@ def opensearch_loader_prefect(
         print_config(config)
         loader = Loader(config)
         try:
-            loader.load()
-            logger.info("Data loading completed")
+            with opensearch_monitor(loader.opensearch.client, get_run_logger()):
+                loader.load()
+                logger.info("Data loading completed")
         finally:
             loader.close()
 
