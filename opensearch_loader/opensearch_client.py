@@ -1,6 +1,10 @@
 """OpenSearch client for index management and document upsert."""
 
 import logging
+import time
+import zlib
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from typing import List, Dict, Any, Optional
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
@@ -249,31 +253,41 @@ class OpenSearchClient:
             logger.warning("No updates to process")
             return
         
-        # Hard coded batch size for OpenSearch operations
-        BATCH_SIZE = BULK_CHUNK_SIZE
-        
-        # Process in batches
-        total_updates = len(updates)
-        num_batches = (total_updates + BATCH_SIZE - 1) // BATCH_SIZE  # Ceiling division
-        
-        if index_name and query_name:
-            logger.debug(f"{index_name}:{query_name}: Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
-        elif index_name:
-            logger.debug(f"{index_name}: Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
-        else:
-            logger.debug(f"Processing {total_updates} updates in {num_batches} batches of {BATCH_SIZE}")
-        
-        for i in range(0, total_updates, BATCH_SIZE):
-            batch = updates[i:i + BATCH_SIZE]
-            batch_num = (i // BATCH_SIZE) + 1
-            if index_name and query_name:
-                logger.debug(f"{index_name}:{query_name}: Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
-            elif index_name:
-                logger.debug(f"{index_name}: Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
-            else:
-                logger.debug(f"Processing batch {batch_num}/{num_batches} ({len(batch)} updates)")
-            self._process_update_batch(index_name, batch, id_field, query_name=query_name)
-    
+        # The same normalized OpenSearch ID always belongs to one serial lane.
+        # Wait for both lanes before returning so callers retain phase/retry barriers.
+        lanes = [[], []]
+        for update in updates:
+            doc_id = str(update.get(id_field))
+            lanes[zlib.crc32(doc_id.encode('utf-8')) % 2].append(update)
+        stopped = Event()
+        started = time.monotonic()
+
+        def write_lane(rows):
+            try:
+                for offset in range(0, len(rows), BULK_CHUNK_SIZE):
+                    if stopped.is_set():
+                        return
+                    self._process_update_batch(
+                        index_name, rows[offset:offset + BULK_CHUNK_SIZE],
+                        id_field, query_name=query_name)
+            except Exception:
+                stopped.set()
+                raise
+
+        status = 'failed'
+        try:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='opensearch-update') as pool:
+                futures = [pool.submit(write_lane, rows) for rows in lanes if rows]
+                for future in futures:
+                    future.result()
+            status = 'complete'
+        finally:
+            logger.info(
+                '%s:%s: UPDATE_WORKER_METRICS status=%s workers=2 '
+                'lane_rows=%s wall_s=%.3f chunk_size=%s',
+                index_name, query_name, status, [len(rows) for rows in lanes],
+                time.monotonic() - started, BULK_CHUNK_SIZE)
+
     def _process_update_batch(self, index_name: str, updates: List[Dict[str, Any]], id_field: str,
                              query_name: Optional[str] = None):
         """Process a single batch of update operations.
