@@ -3,7 +3,8 @@ import glob
 import yaml
 from .config import Config
 import logging
-from prefect import flow
+from prefect import flow, get_run_logger
+from .hardware_metrics import hardware_monitor
 from .prefect_cli import repo_download
 from bento.common.secret_manager import get_secret
 from bento.common.utils import get_logger
@@ -35,59 +36,60 @@ def opensearch_loader_prefect(
     stream_batch_size: int = 1000,
     stream_queue_batches: int = 10,
 ):
-    secret = get_secret(secret_name)
-    setup_logging(verbose=False)
-    logger = logging.getLogger('OpenSearchLoader')
+    with hardware_monitor(get_run_logger()):
+        secret = get_secret(secret_name)
+        setup_logging(verbose=False)
+        logger = logging.getLogger('OpenSearchLoader')
 
-    model_repo = repo_download(model_repo_url, model_branch, logger)
-    model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
-    model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
-    model_files = model_yaml_files + model_yml_files
+        model_repo = repo_download(model_repo_url, model_branch, logger)
+        model_yaml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yaml')
+        model_yml_files = glob.glob(f'{model_repo}/{MODEL_DESC}/*model*.yml')
+        model_files = model_yaml_files + model_yml_files
 
-    monorepo = repo_download(mono_repo_url, monorepo_branch, logger)
-    about_file_path = os.path.join(monorepo, about_file)
-    indices_file_path = os.path.join(monorepo, indices_file)
+        monorepo = repo_download(mono_repo_url, monorepo_branch, logger)
+        about_file_path = os.path.join(monorepo, about_file)
+        indices_file_path = os.path.join(monorepo, indices_file)
 
-    config_object = {
-        # Memgraph connection settings
-        "memgraph": {
-            "host": secret[MEMGRAPH_ENDPOINT],
-            "port": MEMGRAPH_PORT,
-            "username": secret[MEMGRAPH_USER],
-            "password": secret[MEMGRAPH_PASSWORD],
-        },
-        # OpenSearch connection settings
-        "opensearch": {
-            "host": secret[ES_HOST],
-            "use_ssl": True,
-            "verify_certs": True,
-        },
-        # Index specification and processing settings
-        "index_spec_file": indices_file_path,
-        "clear_existing_indices": False,
-        "allow_index_creation": True,
-        "selected_indices": selected_indices,
-        "streaming": streaming,
-        "stream_batch_size": stream_batch_size,
-        "stream_queue_batches": stream_queue_batches,
-        "about_file": about_file_path,
-        "model_files": model_files,
-    }
+        config_object = {
+            # Memgraph connection settings
+            "memgraph": {
+                "host": secret[MEMGRAPH_ENDPOINT],
+                "port": MEMGRAPH_PORT,
+                "username": secret[MEMGRAPH_USER],
+                "password": secret[MEMGRAPH_PASSWORD],
+            },
+            # OpenSearch connection settings
+            "opensearch": {
+                "host": secret[ES_HOST],
+                "use_ssl": True,
+                "verify_certs": True,
+            },
+            # Index specification and processing settings
+            "index_spec_file": indices_file_path,
+            "clear_existing_indices": False,
+            "allow_index_creation": True,
+            "selected_indices": selected_indices,
+            "streaming": streaming,
+            "stream_batch_size": stream_batch_size,
+            "stream_queue_batches": stream_queue_batches,
+            "about_file": about_file_path,
+            "model_files": model_files,
+        }
 
-    config_file = "config.yaml"
-    with open(config_file, "w") as f:
-        yaml.dump(config_object, f, default_flow_style=False, sort_keys=False)
+        config_file = "config.yaml"
+        with open(config_file, "w") as f:
+            yaml.dump(config_object, f, default_flow_style=False, sort_keys=False)
 
-    config = Config(config_file=config_file)
-    print_config(config)
-    loader = Loader(config)
-    try:
-        loader.load()
-        logger.info("Data loading completed")
-    finally:
-        loader.close()
+        config = Config(config_file=config_file)
+        print_config(config)
+        loader = Loader(config)
+        try:
+            loader.load()
+            logger.info("Data loading completed")
+        finally:
+            loader.close()
 
-    return 0
+        return 0
 
 
 if __name__ == "__main__":
