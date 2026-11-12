@@ -110,6 +110,7 @@ class QuerySelectionLoaderTests(unittest.TestCase):
         self.loader.opensearch = MagicMock()
         self.loader.memgraph = MagicMock(last_query_time=0)
         self.loader.query_timings = defaultdict(list)
+        self.loader.opensearch_timings = defaultdict(float)
         self.loader.index_stats = []
         self.loader.model = None
         self.spec = {
