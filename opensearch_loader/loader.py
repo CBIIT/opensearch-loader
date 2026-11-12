@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from collections import defaultdict
+from contextlib import contextmanager
 
 from .config import Config, load_index_spec
 from .memgraph_client import MemgraphClient
@@ -59,6 +60,7 @@ class Loader:
         self.index_stats: List[Dict[str, Any]] = []
         # Query timing: key is "index:query_name", value is list of execution times
         self.query_timings: Dict[str, List[float]] = defaultdict(list)
+        self.opensearch_timings: Dict[str, float] = defaultdict(float)
         
         # Model instance (initialized if model_files are configured)
         self.model = None
@@ -66,6 +68,15 @@ class Loader:
     def close(self):
         """Close all client connections."""
         self.memgraph.close()
+
+    @contextmanager
+    def _track_opensearch_time(self, query_key: str):
+        """Accumulate bulk operation time, including failed attempts and retries."""
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.opensearch_timings[query_key] += time.perf_counter() - start
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds into minutes:seconds format.
@@ -578,7 +589,8 @@ class Loader:
                 # Process this page with retry logic
                 try:
                     logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                    self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
+                    with self._track_opensearch_time(query_key):
+                        self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
                     total_documents += len(page_documents)
                     logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_documents)} documents (total: {total_documents})")
                 except Exception as e:
@@ -586,7 +598,8 @@ class Loader:
                     logger.warning(f"Error processing page {page_num} for {index_name}, retrying: {e}")
                     try:
                         logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_documents)} documents")
-                        self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
+                        with self._track_opensearch_time(query_key):
+                            self.opensearch.bulk_upsert(index_name, page_documents, id_field, query_name=query_name)
                         total_documents += len(page_documents)
                         logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_documents)} documents (total: {total_documents})")
                     except Exception as retry_error:
@@ -607,8 +620,7 @@ class Loader:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
             # This is set after the generator is exhausted
             query_duration = self.memgraph.last_query_time
-            if query_duration > 0:
-                self.query_timings[query_key].append(query_duration)
+            self.query_timings[query_key].append(query_duration)
         
         # Refresh index after all initial upsert operations complete
         self.opensearch.refresh_index(index_name)
@@ -865,7 +877,8 @@ class Loader:
                         logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
                     else:
                         logger.info(f"{index_name}: Loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                    self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
+                    with self._track_opensearch_time(query_key):
+                        self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
                     total_updates += len(page_updates)
                     if query_name:
                         logger.info(f"{index_name}:{query_name}: Completed loading page {page_num} to OpenSearch: {len(page_updates)} updates (total: {total_updates})")
@@ -882,7 +895,8 @@ class Loader:
                             logger.info(f"{index_name}:{query_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
                         else:
                             logger.info(f"{index_name}: Retrying loading page {page_num} to OpenSearch: {len(page_updates)} updates")
-                        self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
+                        with self._track_opensearch_time(query_key):
+                            self.opensearch.bulk_update(index_name, page_updates, id_field, query_name=query_name)
                         total_updates += len(page_updates)
                         if query_name:
                             logger.info(f"{index_name}:{query_name}: Retry successful for page {page_num}: {len(page_updates)} updates (total: {total_updates})")
@@ -913,8 +927,7 @@ class Loader:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
             # This is set after the generator is exhausted
             query_duration = self.memgraph.last_query_time
-            if query_duration > 0:
-                self.query_timings[query_key].append(query_duration)
+            self.query_timings[query_key].append(query_duration)
     
     def _print_summary(self, total_time: float):
         """Print and save loading summary.
@@ -959,6 +972,20 @@ class Loader:
         lines.append("-" * 80)
         lines.append(f"{'Total':<40} {'':<15} {self._format_time(total_time):<15}")
         lines.append("=" * 80)
+
+        if self.query_timings or self.opensearch_timings:
+            lines.append("")
+            lines.append("Query Execution Times")
+            lines.append("OpenSearch measures bulk operations, including retries; excludes refresh and retry backoff.")
+            lines.append("=" * 96)
+            lines.append(f"{'Index:Query':<60} {'Memgraph (s)':>16} {'OpenSearch (s)':>16}")
+            lines.append("-" * 96)
+            query_keys = dict.fromkeys([*self.query_timings, *self.opensearch_timings])
+            for query_key in query_keys:
+                memgraph_time = sum(self.query_timings.get(query_key, []))
+                opensearch_time = self.opensearch_timings.get(query_key, 0.0)
+                lines.append(f"{query_key:<60} {memgraph_time:>16.4f} {opensearch_time:>16.4f}")
+            lines.append("=" * 96)
         
         summary_text = "\n".join(lines)
         
