@@ -552,6 +552,11 @@ class Loader:
             logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
             return 0
         
+        # Assemble dashboard_file on disk before submitting completed documents.
+        if index_name == 'dashboard_file' and self.config.get('sqlite_staging', True):
+            from .staging import load_staged_index
+            return load_staged_index(self, index_config, parsed_mapping)
+
         # Delete index if configured
         if self.config.get_clear_existing_indices():
             logger.info(f"Deleting index (if exists): {index_name}")

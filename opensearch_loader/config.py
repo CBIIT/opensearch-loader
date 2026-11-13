@@ -61,6 +61,7 @@ class Config:
             'OS_LOADER_ABOUT_FILE': ('about_file',),
             'OS_LOADER_MODEL_FILES': ('model_files',),
             'OS_LOADER_TEST_MODE': ('test_mode',),
+            'OS_LOADER_SQLITE_STAGING': ('sqlite_staging',),
         }
         
         for env_var, path in env_mapping.items():
