@@ -4,6 +4,8 @@ import logging
 import sqlite3
 import tempfile
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 logger = logging.getLogger('OpenSearchLoader')
@@ -22,7 +24,8 @@ def merge_document(current, patch):
 class DocumentStore:
     def __init__(self, path, dumps=json.dumps):
         self.dumps = dumps
-        self.db = sqlite3.connect(str(path))
+        # A single merge worker owns writes; caller access resumes only after it joins.
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA synchronous=NORMAL')
         self.db.execute('PRAGMA cache_size=-32768')  # 32 MiB SQLite page cache
@@ -72,6 +75,48 @@ class DocumentStore:
         self.db.close()
 
 
+def stage_pages(store, pages, id_field, update, validate, queue_batches=10):
+    """Read on the caller thread; serialize SQLite merges on one worker.
+
+    At most queue_batches pages are submitted (including the active merge).
+    The caller must not access the store until this function returns.
+    """
+    pending = deque()
+    totals = dict(rows=0, affected=0, invalid=0, merge_s=0.0, wait_s=0.0)
+
+    def merge(rows):
+        started = time.monotonic()
+        affected, invalid = store.add_page(rows, id_field, update=update)
+        return len(rows), affected, invalid, time.monotonic() - started
+
+    def collect():
+        started = time.monotonic()
+        rows, affected, invalid, seconds = pending.popleft().result()
+        totals['wait_s'] += time.monotonic() - started
+        totals['rows'] += rows
+        totals['affected'] += affected
+        totals['invalid'] += invalid
+        totals['merge_s'] += seconds
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='sqlite-merge') as executor:
+        try:
+            for rows in pages:
+                if not rows:
+                    continue
+                validate(rows)
+                pending.append(executor.submit(merge, rows))
+                if len(pending) >= queue_batches:
+                    collect()
+            while pending:
+                collect()
+        finally:
+            for future in pending:
+                future.cancel()
+            if hasattr(pages, 'close'):
+                pages.close()
+    return totals
+
+
 def load_staged_index(loader, spec, mapping):
     """Read all phases into SQLite, then send each completed document once."""
     name, id_field = spec['index_name'], spec['id_field']
@@ -86,7 +131,7 @@ def load_staged_index(loader, spec, mapping):
     try:
         # Use the same JSON conversion as OpenSearch (dates and other supported types).
         store = DocumentStore(path, dumps=loader.opensearch.client.transport.serializer.dumps)
-        logger.info('%s: SQLITE_STAGING path=%s', name, path)
+        logger.info('%s: SQLITE_STAGING path=%s async_merge=true queue_batches=10', name, path)
         phases = [(initial, 'Initial Query', False)] + [
             (query, query.get('name') or 'unnamed', True)
             for query in spec.get('update_queries', [])]
@@ -95,34 +140,26 @@ def load_staged_index(loader, spec, mapping):
                 logger.warning('%s:%s: Missing query, skipping', name, label)
                 continue
             phase_started = time.monotonic()
-            rows_seen = changed = skipped = 0
-            merge_s = 0.0
             pages = loader.memgraph.execute_paginated_query(
                 query['query'], parameters=query.get('variables', {}),
                 page_size=query.get('page_size', 10000), index_name=name,
                 query_name=label, test_mode=loader.config.get_test_mode() if update else False)
-            try:
-                for rows in pages:
-                    if not rows:
-                        continue
-                    if not loader._validate_query_fields(name, rows, mapping):
-                        raise ValueError(f'{name}:{label}: Unmapped fields; staging aborted')
-                    merge_started = time.monotonic()
-                    affected, invalid = store.add_page(rows, id_field, update=update)
-                    merge_s += time.monotonic() - merge_started
-                    rows_seen += len(rows)
-                    changed += affected
-                    skipped += invalid
-            finally:
-                if hasattr(pages, 'close'):
-                    pages.close()
+            def validate(rows):
+                if not loader._validate_query_fields(name, rows, mapping):
+                    raise ValueError(f'{name}:{label}: Unmapped fields; staging aborted')
+            metrics = stage_pages(store, pages, id_field, update, validate)
+            rows_seen = metrics['rows']
+            changed = metrics['affected']
+            skipped = metrics['invalid']
+            merge_s = metrics['merge_s']
             read_s = loader.memgraph.last_query_time
             loader.query_timings[f'{name}:{label}'].append(read_s)
             logger.info('%s:%s: STAGING_QUERY_METRICS rows=%s affected=%s invalid_ids=%s '
-                        'unmatched_updates=%s read_s=%.3f merge_s=%.3f wall_s=%.3f',
+                        'unmatched_updates=%s read_s=%.3f merge_s=%.3f wall_s=%.3f '
+                        'queue_wait_s=%.3f queue_batches=10',
                         name, label, rows_seen, changed, skipped,
                         rows_seen - skipped - changed if update else 0,
-                        read_s, merge_s, time.monotonic() - phase_started)
+                        read_s, merge_s, time.monotonic() - phase_started, metrics['wait_s'])
         total = store.count()
         logger.info('%s: STAGING_READY documents=%s stage_s=%.3f',
                     name, total, time.monotonic() - started)

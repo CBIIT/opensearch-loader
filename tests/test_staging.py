@@ -1,11 +1,12 @@
 import json
 import tempfile
 import unittest
+import threading
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from opensearch_loader.staging import DocumentStore, load_staged_index
+from opensearch_loader.staging import DocumentStore, load_staged_index, stage_pages
 
 
 class StagingTests(unittest.TestCase):
@@ -27,6 +28,39 @@ class StagingTests(unittest.TestCase):
                 self.assertEqual(len(list(store.batches(max_bytes=1))), 2)
             finally:
                 store.close()
+
+    def test_reads_overlap_merge_and_queue_is_bounded(self):
+        next_read = threading.Event()
+        merged = []
+        produced = []
+        def add(rows, *args, **kwargs):
+            if rows == [0]:
+                self.assertTrue(next_read.wait(2), 'reader did not overlap merge')
+                self.assertLessEqual(len(produced), 10)
+            merged.extend(rows)
+            return len(rows), 0
+        def pages():
+            for i in range(20):
+                produced.append(i)
+                if i == 1:
+                    next_read.set()
+                yield [i]
+        result = stage_pages(SimpleNamespace(add_page=add), pages(), 'id', False, lambda rows: None)
+        self.assertEqual(merged, list(range(20)))
+        self.assertEqual(result['rows'], 20)
+
+    def test_async_merge_failure_closes_reader(self):
+        closed = []
+        def pages():
+            try:
+                for i in range(10):
+                    yield [i]
+            finally:
+                closed.append(True)
+        store = SimpleNamespace(add_page=Mock(side_effect=RuntimeError('merge failed')))
+        with self.assertRaisesRegex(RuntimeError, 'merge failed'):
+            stage_pages(store, pages(), 'id', False, lambda rows: None)
+        self.assertEqual(closed, [True])
 
     def loader(self, fail=False):
         loader = SimpleNamespace(config=Mock(), memgraph=Mock(), opensearch=Mock(),
