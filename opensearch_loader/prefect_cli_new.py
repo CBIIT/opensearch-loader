@@ -31,7 +31,6 @@ def opensearch_loader_prefect(
     about_file,
     indices_file,
     selected_indices,
-    sqlite_staging: bool = True,
 ):
     secret = get_secret(secret_name)
     setup_logging(verbose=False)
@@ -65,7 +64,6 @@ def opensearch_loader_prefect(
         "clear_existing_indices": False,
         "allow_index_creation": True,
         "selected_indices": selected_indices,
-        "sqlite_staging": sqlite_staging,
         "about_file": about_file_path,
         "model_files": model_files,
     }
