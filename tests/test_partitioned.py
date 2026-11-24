@@ -13,9 +13,9 @@ STUDY_QUERY = 'MATCH (s:study) WITH s SKIP $skip LIMIT $limit RETURN s.id AS fil
 class PartitionTests(unittest.TestCase):
     def test_stable_disjoint_numeric_and_uuid_ids(self):
         for number in range(100):
-            self.assertEqual(partition_for_id(str(number)), number % 2)
+            self.assertEqual(partition_for_id(str(number)), number % 4)
         for digit in '0123456789abcdef':
-            self.assertEqual(partition_for_id('ABC-123' + digit), int(digit, 16) % 2)
+            self.assertEqual(partition_for_id('ABC-123' + digit), int(digit, 16) % 4)
         with self.assertRaises(ValueError):
             partition_for_id(None)
 
@@ -45,7 +45,7 @@ class PartitionTests(unittest.TestCase):
     def test_one_reader_concurrent_writes_and_ordered_updates(self):
         loader = self.parent()
         original = loader.opensearch
-        overlap = Barrier(2, timeout=3)
+        overlap = Barrier(4, timeout=3)
         lock = Lock()
         seen = defaultdict(list)
         targets = set()
@@ -58,7 +58,7 @@ class PartitionTests(unittest.TestCase):
             yield [{'file_id': str(i)} for i in range(5, 10)]
         loader.memgraph.execute_paginated_query.side_effect = read
         def write(name, docs, id_field, query_name):
-            overlap.wait()  # Both workers must be active, not sequential.
+            overlap.wait()  # All four workers must be active, not sequential.
             self.assertEqual(len({partition_for_id(d[id_field]) for d in docs}), 1)
             with lock:
                 targets.add(name)
@@ -75,9 +75,10 @@ class PartitionTests(unittest.TestCase):
         original.create_index.assert_called_once()
         self.assertEqual(original.create_index.call_args.kwargs['number_of_shards'], 2)
         self.assertEqual(original.refresh_index.call_count, 2)
-        actions = original.client.indices.update_aliases.call_args.kwargs['body']['actions']
-        self.assertEqual([a['remove']['index'] for a in actions[:2]], ['old-even', 'old-odd'])
-        self.assertEqual(actions[2]['add']['index'], next(iter(targets)))
+        self.assertEqual(targets, {'dashboard_file'})
+        self.assertEqual(original.create_index.call_args.args[0], 'dashboard_file')
+        original.client.indices.update_aliases.assert_not_called()
+        original.client.indices.get_alias.assert_not_called()
         self.assertIs(loader.opensearch, original)
         self.assertFalse(loader.partition_mode)
 
