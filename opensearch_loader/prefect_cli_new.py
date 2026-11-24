@@ -31,7 +31,7 @@ def opensearch_loader_prefect(
     about_file,
     indices_file,
     selected_indices,
-    parallel_dashboard_file: bool = False,
+    parallel_writes: bool = False,
 ):
     secret = get_secret(secret_name)
     setup_logging(verbose=False)
@@ -65,7 +65,7 @@ def opensearch_loader_prefect(
         "clear_existing_indices": False,
         "allow_index_creation": True,
         "selected_indices": selected_indices,
-        "parallel_dashboard_file": parallel_dashboard_file,
+        "parallel_writes": parallel_writes,
         "about_file": about_file_path,
         "model_files": model_files,
     }

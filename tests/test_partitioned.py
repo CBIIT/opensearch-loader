@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from collections import defaultdict
 from threading import Barrier, Event, Lock
 from unittest.mock import Mock
@@ -135,6 +137,55 @@ class PartitionTests(unittest.TestCase):
             load_partitioned(loader, self.spec())
         original.client.indices.update_aliases.assert_not_called()
         self.assertIs(loader.opensearch, original)
+
+    def enable_all(self, loader):
+        loader.config.get.side_effect = lambda key, default=None: True if key == 'parallel_writes' else default
+
+    def test_multiple_query_indexes_use_their_own_id_fields(self):
+        loader = self.parent()
+        self.enable_all(loader)
+        original = loader.opensearch
+        for name, field in [('dashboard_participant', 'participant_id'), ('gs_study', 'study_id')]:
+            spec = dict(index_name=name, id_field=field,
+                        mapping={'keyword': [field]}, initial_query={'query': name})
+            loader.memgraph.execute_paginated_query.side_effect = lambda *a, **k: iter([
+                [{field: str(i)} for i in range(8)]])
+            original.bulk_upsert.reset_mock()
+            self.assertEqual(loader._process_index(spec), 8)
+            calls = original.bulk_upsert.call_args_list
+            self.assertEqual(len(calls), 4)
+            self.assertTrue(all(c.args[0] == name and c.args[2] == field for c in calls))
+        self.assertIs(loader.opensearch, original)
+
+    def test_model_index_uses_four_writers(self):
+        loader = self.parent()
+        self.enable_all(loader)
+        original = loader.opensearch
+        loader.model = object()
+        loader.get_model_data = Mock(return_value=iter([{'id': str(i)} for i in range(8)]))
+        barrier = Barrier(4, timeout=3)
+        original.bulk_upsert.side_effect = lambda *a, **k: barrier.wait()
+        self.assertEqual(loader._process_index(dict(index_name='model_nodes', type='model', subtype='node')), 8)
+        self.assertEqual(original.bulk_upsert.call_count, 4)
+        self.assertTrue(all(c.kwargs['id_field'] == 'id' if 'id_field' in c.kwargs else c.args[2] == 'id'
+                            for c in original.bulk_upsert.call_args_list))
+
+    def test_about_pages_keep_original_ids_and_sources(self):
+        loader = self.parent()
+        self.enable_all(loader)
+        original = loader.opensearch
+        barrier = Barrier(4, timeout=3)
+        original.upsert_document.side_effect = lambda *a, **k: barrier.wait()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'about.yaml'
+            path.write_text(''.join(f'- page: {i}\n  title: Page {i}\n' for i in range(4)))
+            loader.config.get_about_file.return_value = str(path)
+            self.assertEqual(loader._process_index(dict(index_name='about_page', type='about_file')), 4)
+        calls = original.upsert_document.call_args_list
+        self.assertEqual({c.args[1] for c in calls}, {'page0', 'page1', 'page2', 'page3'})
+        for c in calls:
+            self.assertEqual(c.args[2], {'page': int(c.args[1][-1]), 'title': 'Page ' + c.args[1][-1]})
+        original.refresh_index.assert_called_once_with('about_page')
 
     def test_initial_retry_does_not_hide_failure_or_reset_count(self):
         loader = self.parent()

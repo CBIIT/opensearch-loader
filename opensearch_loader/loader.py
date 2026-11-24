@@ -185,7 +185,7 @@ class Loader:
                     'error': False
                 })
             except Exception as e:
-                if self.config.get('parallel_dashboard_file', False) and index_name == 'dashboard_file':
+                if self.config.get('parallel_writes', False):
                     raise
                 index_end_time = time.time()
                 index_duration = index_end_time - index_start_time
@@ -222,22 +222,21 @@ class Loader:
         if not index_name:
             raise ValueError("index_name is required in index configuration")
         
-        index_type = index_config.get('type')
-        
         logger.info(f"Starting index: {index_name}")
-        
-        # Route to appropriate handler based on index type
+        if self.config.get('parallel_writes', False):
+            from .partitioned import load_partitioned
+            return load_partitioned(self, index_config)
+        return self._process_index_serial(index_config)
+
+    def _process_index_serial(self, index_config: Dict[str, Any]) -> int:
+        """Dispatch the index without installing another write wrapper."""
+        index_type = index_config.get('type')
         if index_type == 'about_file':
             return self._process_about_file_index(index_config)
-        elif index_type == 'model':
+        if index_type == 'model':
             return self._process_model_index(index_config)
-        else:
-            # Default: treat as query-based index
-            if index_name == 'dashboard_file' and self.config.get('parallel_dashboard_file', False):
-                from .partitioned import load_partitioned
-                return load_partitioned(self, index_config)
-            return self._process_query_index(index_config)
-    
+        return self._process_query_index(index_config)
+
     def _get_default_about_mapping(self) -> Dict[str, Any]:
         """Get default mapping for about file indices.
         
@@ -794,6 +793,7 @@ class Loader:
         
         # Load and index pages
         page_count = 0
+        parallel_pages = []
         with open(file_name) as file_obj:
             about_file = yaml.safe_load(file_obj)
             if not about_file:
@@ -808,9 +808,15 @@ class Loader:
                 
                 logger.info(f'Indexing about page "{page_num}"')
                 doc_id = f'page{page_num}'
-                self.opensearch.upsert_document(index_name, doc_id, page)
+                if getattr(self, 'partition_mode', False):
+                    parallel_pages.append((doc_id, page))
+                else:
+                    self.opensearch.upsert_document(index_name, doc_id, page)
                 page_count += 1
         
+        if parallel_pages:
+            self.opensearch.upsert_pages(index_name, parallel_pages)
+
         # Refresh index
         self.opensearch.refresh_index(index_name)
         

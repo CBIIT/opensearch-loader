@@ -12,7 +12,7 @@ WRITE_WORKERS = 4
 def partition_for_id(value):
     """Stable assignment for numeric IDs, UUIDs, and other nonempty IDs."""
     if value is None or not str(value):
-        raise ValueError("Parallel writes require a nonempty file_id")
+        raise ValueError("Parallel writes require a nonempty document ID")
     value = str(value).lower()
     if value.isascii() and value.isdecimal():
         return int(value) % WRITE_WORKERS
@@ -32,7 +32,7 @@ class ParallelWrites:
     def __init__(self, client):
         self.delegate = client
         self.pools = [ThreadPoolExecutor(max_workers=1,
-                      thread_name_prefix=f"dashboard-write-{p}") for p in range(WRITE_WORKERS)]
+                      thread_name_prefix=f"opensearch-write-{p}") for p in range(WRITE_WORKERS)]
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -59,15 +59,30 @@ class ParallelWrites:
     def bulk_update(self, index_name, documents, id_field, **kwargs):
         self._write('bulk_update', index_name, documents, id_field, **kwargs)
 
+    def upsert_pages(self, index_name, pages):
+        """Keep about-page IDs and sources unchanged while writing concurrently."""
+        partitions = [[] for _ in range(WRITE_WORKERS)]
+        for doc_id, page in pages:
+            partitions[partition_for_id(doc_id)].append((doc_id, page))
+
+        def write(rows):
+            for doc_id, page in rows:
+                self.delegate.upsert_document(index_name, doc_id, page)
+
+        futures = [pool.submit(write, rows)
+                   for pool, rows in zip(self.pools, partitions) if rows]
+        if futures:
+            wait(futures)
+            for future in futures:
+                future.result()
+
     def shutdown(self):
         for pool in self.pools:
             pool.shutdown(wait=True)
 
 
 def load_partitioned(loader, spec):
-    """Read once and write directly to dashboard_file with four workers."""
-    if spec.get("index_name") != "dashboard_file" or spec.get("id_field") != "file_id":
-        raise ValueError("Parallel loading supports dashboard_file/file_id only")
+    """Run any index handler with four ID-partitioned write workers."""
     original = loader.opensearch
     writes = ParallelWrites(original)
     previous_mode = getattr(loader, 'partition_mode', False)
@@ -79,7 +94,7 @@ def load_partitioned(loader, spec):
                     spec['index_name'], WRITE_WORKERS)
         # The normal index-creation configuration applies. All workers write to
         # the same index, and each batch completes before the next one starts.
-        count = loader._process_query_index(spec)
+        count = loader._process_index_serial(spec)
     finally:
         writes.shutdown()
         loader.opensearch = original
