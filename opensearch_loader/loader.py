@@ -62,6 +62,7 @@ class Loader:
     def close(self):
         """Close all client connections."""
         self.memgraph.close()
+        self.opensearch.client.close()
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds into minutes:seconds format.
@@ -184,6 +185,8 @@ class Loader:
                     'error': False
                 })
             except Exception as e:
+                if self.config.get('parallel_dashboard_file', False) and index_name == 'dashboard_file':
+                    raise
                 index_end_time = time.time()
                 index_duration = index_end_time - index_start_time
                 error_occurred = True
@@ -230,6 +233,9 @@ class Loader:
             return self._process_model_index(index_config)
         else:
             # Default: treat as query-based index
+            if index_name == 'dashboard_file' and self.config.get('parallel_dashboard_file', False):
+                from .partitioned import load_partitioned
+                return load_partitioned(self, index_config)
             return self._process_query_index(index_config)
     
     def _get_default_about_mapping(self) -> Dict[str, Any]:
@@ -542,6 +548,8 @@ class Loader:
         # REQUIRE mapping - skip index if missing
         mapping_config = index_config.get('mapping')
         if not mapping_config:
+            if getattr(self, 'partition_mode', False):
+                raise ValueError('Partitioned loading requires an explicit mapping')
             logger.error(f"Index {index_name} is missing required 'mapping' configuration. Skipping index.")
             return 0
         
@@ -549,6 +557,8 @@ class Loader:
         try:
             parsed_mapping = self._parse_mapping(mapping_config)
         except ValueError as e:
+            if getattr(self, 'partition_mode', False):
+                raise
             logger.error(f"Index {index_name}: Invalid mapping configuration: {e}. Skipping index.")
             return 0
         
@@ -562,7 +572,8 @@ class Loader:
         # Use force=True to ensure we recreate the index even if it exists (in case it was auto-created)
         if self.config.get_allow_index_creation():
             logger.info(f"Creating index (if not exists): {index_name} with explicit mapping")
-            self.opensearch.create_index(index_name, mapping=parsed_mapping, force=True)
+            self.opensearch.create_index(index_name, mapping=parsed_mapping, force=True,
+                                         number_of_shards=index_config.get('number_of_shards', 2))
         
         # Execute initial query
         initial_query_config = index_config.get('initial_query')
@@ -606,7 +617,7 @@ class Loader:
                 if not first_page_validated:
                     if not self._validate_query_fields(index_name, page_documents, parsed_mapping):
                         # Validation failed - error already logged, skip entire index
-                        return 0
+                        raise ValueError(f"Index {index_name}: initial query returned unmapped fields")
                     first_page_validated = True
                 total_page_documents.extend(page_documents)
                 if self._documents_byte_size(total_page_documents) > OPENSEARCH_BATCH_BYTE_LIMIT:
@@ -647,6 +658,8 @@ class Loader:
             try:
                 self._process_update_query(index_name, id_field, update_query_config, parsed_mapping)
             except ValueError:
+                if getattr(self, 'partition_mode', False):
+                    raise
                 # Validation failed in update query - skip entire index
                 logger.error(f"Index {index_name}: Skipping remaining update queries due to validation failure.")
                 break
@@ -678,7 +691,6 @@ class Loader:
             Exception: If the retry also fails
         """
         truncated_query = None
-        total_documents = 0
         try:
             logger.info(f"{index_name}:{query_name}: Loading page {page_num} to OpenSearch: {len(documents)} documents")
             self.opensearch.bulk_upsert(index_name, documents, id_field, query_name=query_name)
@@ -695,8 +707,7 @@ class Loader:
                 truncated_query = self._truncate_query(query)
                 logger.error(f"Retry failed for page {page_num} for {index_name}: {retry_error}. Query: {truncated_query}. Skipping entire index.")
                 raise
-        finally:
-            return total_documents, truncated_query
+        return total_documents, truncated_query
 
     def _update_documents_with_retry(self, index_name: str, query_name: str, page_num: int,
                                      updates: List[Dict[str, Any]], id_field: str, query: str,

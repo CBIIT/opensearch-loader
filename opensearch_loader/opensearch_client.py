@@ -73,7 +73,8 @@ class OpenSearchClient:
             logger.info(f"Index does not exist, skipping deletion: {index_name}")
     
     def create_index(self, index_name: str, id_field: Optional[str] = None,
-                     mapping: Optional[Dict[str, Any]] = None, force: bool = False):
+                     mapping: Optional[Dict[str, Any]] = None, force: bool = False,
+                     number_of_shards: int = 2):
         """Create an index with basic settings.
         
         Args:
@@ -92,7 +93,7 @@ class OpenSearchClient:
             
             # Add settings
             body["settings"] = {
-                "number_of_shards": 2,
+                "number_of_shards": number_of_shards,
                 "number_of_replicas": 0,
                 "index.mapping.nested_objects.limit": 100000
             }
