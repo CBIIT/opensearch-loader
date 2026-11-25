@@ -44,3 +44,18 @@ deployments:
       job_variables:
         env:
           PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader"
+
+  - name: gc-opensearch-compare-indices
+    version: null
+    tags: []
+    description: "Read-only comparison of one index between two OpenSearch domains."
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/compare_indices.py:compare_indices
+    parameters:
+      reference_secret: "gen/dev2-cdk"
+      candidate_secret: "gen/amit-opensearch"
+      index: "dashboard_file"
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
