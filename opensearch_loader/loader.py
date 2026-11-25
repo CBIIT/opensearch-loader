@@ -202,7 +202,7 @@ class Loader:
                     'error': False
                 })
             except Exception as e:
-                if self.config.get('parallel_writes', False):
+                if self.config.get('parallel_writes', False) or self.config.get('merge_mode', False):
                     raise
                 index_end_time = time.time()
                 index_duration = index_end_time - index_start_time
@@ -307,6 +307,9 @@ class Loader:
             raise ValueError("index_name is required in index configuration")
         
         logger.info(f"Starting index: {index_name}")
+        if self.config.get('merge_mode', False) and index_config.get('type') not in ('about_file', 'model'):
+            from .merge import load_merged
+            return load_merged(self, index_config)
         if self.config.get('parallel_writes', False):
             from .partitioned import load_partitioned
             return load_partitioned(self, index_config)

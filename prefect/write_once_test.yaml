@@ -1,0 +1,48 @@
+# Test deployment for merge_mode (write each document once). Deploy only this file:
+#   prefect deploy --prefect-file prefect/write_once_test.yaml -n gc-opensearch-loader-write-once-test
+name: CRDC Open Search Loader
+prefect-version: null
+build: null
+push: null
+
+pull:
+  - prefect.deployments.steps.git_clone:
+      id: clone-step
+      repository: https://github.com/CBIIT/opensearch-loader.git
+      branch: write-once-merge
+      include_submodules: True
+  - prefect.deployments.steps.set_working_directory:
+      directory: "/opt/prefect/opensearch-loader-write-once-merge"
+  - prefect.deployments.steps.pip_install_requirements:
+      requirements_file: requirements.txt
+      directory: "{{ clone-step.directory }}"
+      stream_output: False
+
+deployments:
+  - name: gc-opensearch-loader-write-once-test
+    version: null
+    tags: []
+    description: "Write-once merge test. Only runs against hosts containing required_host."
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/prefect_cli_new.py:opensearch_loader_prefect
+    parameters:
+      secret_name: "gen/amit-opensearch"
+      required_host: "amit-opensearch"
+      merge_mode: true
+      merge_dir: ""
+      parallel_writes: false
+      index_workers: 4
+      model_repo_url: "https://github.com/CBIIT/cds-model.git"
+      model_branch: "13.0.1"
+      mono_repo_url: "https://github.com/CBIIT/general-commons.git"
+      monorepo_branch: "4.9.0"
+      about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
+      indices_file: "backend/src/main/resources/yaml/indices.yaml"
+      selected_indices: ["dashboard_file"]
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
+      job_variables:
+        env:
+          PREFECT_LOGGING_EXTRA_LOGGERS: "OpenSearchLoader"

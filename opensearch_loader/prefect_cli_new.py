@@ -33,8 +33,13 @@ def opensearch_loader_prefect(
     selected_indices,
     parallel_writes: bool = False,
     index_workers: int = 4,
+    merge_mode: bool = False,
+    merge_dir: str = "",
+    required_host: str = "",
 ):
     secret = get_secret(secret_name)
+    if required_host and required_host not in secret[ES_HOST]:
+        raise ValueError(f"OpenSearch host does not contain '{required_host}', refusing to run")
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
 
@@ -68,6 +73,8 @@ def opensearch_loader_prefect(
         "selected_indices": selected_indices,
         "parallel_writes": parallel_writes,
         "index_workers": index_workers,
+        "merge_mode": merge_mode,
+        "merge_dir": merge_dir or None,
         "about_file": about_file_path,
         "model_files": model_files,
     }
