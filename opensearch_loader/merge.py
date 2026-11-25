@@ -2,7 +2,7 @@
 
 The partial-update path rewrites every document once per update query. This path
 keeps the same queries and merge rules but merges rows in a local SQLite file and
-bulk-indexes the finished documents into a new versioned index behind an alias.
+bulk-indexes the finished documents into the index in one pass.
 """
 
 import json
@@ -12,7 +12,7 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Iterable, Iterator
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -24,8 +24,8 @@ logger = logging.getLogger("OpenSearchLoader")
 
 WRITE_BATCH_BYTES = 10 * 1024 * 1024
 WRITE_THREADS = 4
-SWAP_RETRIES = 20
-SWAP_RETRY_SECONDS = 30
+DELETE_RETRIES = 20
+DELETE_RETRY_SECONDS = 30
 
 
 def _json_default(value):
@@ -115,10 +115,6 @@ class MergeStore:
                 os.remove(self.path)
 
 
-def versioned_name(index_name: str) -> str:
-    return f"{index_name}__{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
-
-
 def _write_documents(client, index: str, store: MergeStore) -> int:
     """Bulk-index every stored document with a few threads and a small queue."""
     def actions():
@@ -139,47 +135,26 @@ def _write_documents(client, index: str, store: MergeStore) -> int:
     return written
 
 
-def _swap_alias(client, alias: str, new_index: str):
-    """Point the alias at new_index, retrying while a snapshot blocks the change."""
-    for attempt in range(1, SWAP_RETRIES + 1):
-        actions = []
-        if client.indices.exists_alias(name=alias):
-            for old in client.indices.get_alias(name=alias):
-                actions.append({"remove": {"index": old, "alias": alias}})
-        elif client.indices.exists(index=alias):
-            # A concrete index from the old loader holds the name; remove it in the same atomic call.
-            actions.append({"remove_index": {"index": alias}})
-        actions.append({"add": {"index": new_index, "alias": alias}})
-        try:
-            client.indices.update_aliases(body={"actions": actions})
-            return [a["remove"]["index"] for a in actions if "remove" in a]
-        except Exception as exc:
-            if "snapshot_in_progress" not in str(exc) or attempt == SWAP_RETRIES:
-                raise
-            logger.warning(f"{alias}: snapshot in progress, retrying alias swap in {SWAP_RETRY_SECONDS}s "
-                           f"({attempt}/{SWAP_RETRIES})")
-            time.sleep(SWAP_RETRY_SECONDS)
+def _recreate_index(client, index_name: str, body: dict[str, Any]):
+    """Delete the index and create it again, retrying while a snapshot blocks the delete.
 
-
-def _delete_old(client, indices: list[str]):
-    """Best effort: an old index that cannot be deleted now is left for the next run."""
-    for index in indices:
+    Indices left behind an alias by earlier test runs are removed along with the alias.
+    """
+    for attempt in range(1, DELETE_RETRIES + 1):
         try:
-            client.indices.delete(index=index)
-            logger.info(f"Deleted previous index {index}")
+            if client.indices.exists_alias(name=index_name):
+                for backing in list(client.indices.get_alias(name=index_name)):
+                    client.indices.delete(index=backing)
+            elif client.indices.exists(index=index_name):
+                client.indices.delete(index=index_name)
+            break
         except OpenSearchException as exc:
-            logger.warning(f"Could not delete previous index {index}: {exc}")
-
-
-def _delete_orphans(client, alias: str):
-    """Remove versions of this index left behind by earlier runs that are no longer aliased."""
-    live = set(client.indices.get_alias(name=alias)) if client.indices.exists_alias(name=alias) else set()
-    try:
-        found = client.indices.get(index=f"{alias}__*", ignore_unavailable=True, allow_no_indices=True)
-    except OpenSearchException as exc:
-        logger.warning(f"{alias}: could not list earlier versions: {exc}")
-        return
-    _delete_old(client, [name for name in found if name not in live])
+            if "snapshot_in_progress" not in str(exc) or attempt == DELETE_RETRIES:
+                raise
+            logger.warning(f"{index_name}: snapshot in progress, retrying delete in {DELETE_RETRY_SECONDS}s "
+                           f"({attempt}/{DELETE_RETRIES})")
+            time.sleep(DELETE_RETRY_SECONDS)
+    client.indices.create(index=index_name, body=body)
 
 
 def _run_query(loader, index_name: str, query_config: dict[str, Any], query_name: str,
@@ -207,7 +182,7 @@ def _run_query(loader, index_name: str, query_config: dict[str, Any], query_name
 
 
 def load_merged(loader, index_config: dict[str, Any]) -> int:
-    """Run every query for one index, merge on the worker, write once, then swap the alias."""
+    """Run every query for one index, merge on the worker, then write each document once."""
     index_name = index_config['index_name']
     id_field = index_config.get('id_field')
     if not id_field:
@@ -240,9 +215,8 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
             logger.info(f"{index_name}:{name}: merged {merged} rows, dropped {dropped}")
         merge_seconds = time.monotonic() - started
 
-        _delete_orphans(client, index_name)
-        new_index = versioned_name(index_name)
-        client.indices.create(index=new_index, body={
+        # Delete and recreate only now, after all Memgraph work, so the index is missing for minutes, not hours.
+        _recreate_index(client, index_name, {
             "settings": {
                 "number_of_shards": index_config.get('number_of_shards', 2),
                 "number_of_replicas": 0,
@@ -252,20 +226,13 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
             "mappings": {"dynamic": False, "properties": mapping},
         })
         write_started = time.monotonic()
-        try:
-            written = _write_documents(client, new_index, store)
-            client.indices.put_settings(index=new_index, body={"index": {"refresh_interval": None}})
-            client.indices.refresh(index=new_index)
-            if written != total:
-                raise RuntimeError(f"{index_name}: wrote {written} of {total} documents")
-        except Exception:
-            _delete_old(client, [new_index])
-            raise
+        written = _write_documents(client, index_name, store)
+        client.indices.put_settings(index=index_name, body={"index": {"refresh_interval": None}})
+        client.indices.refresh(index=index_name)
+        if written != total:
+            raise RuntimeError(f"{index_name}: wrote {written} of {total} documents")
         write_seconds = time.monotonic() - write_started
-
-        replaced = _swap_alias(client, index_name, new_index)
-        _delete_old(client, replaced)
-        logger.info(f"{index_name}: {written} documents written once to {new_index}; "
+        logger.info(f"{index_name}: {written} documents written once; "
                     f"memgraph+merge={merge_seconds:.0f}s opensearch_write={write_seconds:.0f}s")
         return written
     finally:
