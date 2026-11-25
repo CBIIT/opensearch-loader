@@ -187,6 +187,42 @@ class PartitionTests(unittest.TestCase):
             self.assertEqual(c.args[2], {'page': int(c.args[1][-1]), 'title': 'Page ' + c.args[1][-1]})
         original.refresh_index.assert_called_once_with('about_page')
 
+    def test_missing_ids_skip_like_serial_writer_for_both_operations(self):
+        for method in ('bulk_upsert', 'bulk_update'):
+            with self.subTest(method=method):
+                client = Mock()
+                writes = ParallelWrites(client)
+                valid = [{'study_participant_id': '0', 'value': 1},
+                         {'study_participant_id': 'abc1', 'value': 2}]
+                missing = [{}, {'study_participant_id': None},
+                           {'study_participant_id': ''}, {'study_participant_id': 0}]
+                try:
+                    with self.assertLogs('OpenSearchLoader', level='WARNING') as captured:
+                        getattr(writes, method)('dashboard_participant', valid + missing,
+                                               'study_participant_id', query_name='Study')
+                    self.assertIn('Skipping 4/6 rows', captured.output[0])
+                    sent = [row for c in getattr(client, method).call_args_list for row in c.args[1]]
+                    self.assertCountEqual(sent, valid)
+                    getattr(client, method).reset_mock()
+                    with self.assertLogs('OpenSearchLoader', level='WARNING'):
+                        getattr(writes, method)('dashboard_participant', missing,
+                                               'study_participant_id', query_name='Study')
+                    getattr(client, method).assert_not_called()
+                finally:
+                    writes.shutdown()
+
+    def test_write_value_error_logs_actual_reason(self):
+        loader = self.parent()
+        loader.memgraph.execute_paginated_query.side_effect = lambda *a, **k: iter([[{'file_id': '1'}]])
+        loader.opensearch.bulk_update.side_effect = ValueError('specific write failure')
+        with self.assertLogs('OpenSearchLoader', level='ERROR') as captured:
+            with self.assertRaisesRegex(ValueError, 'specific write failure'):
+                loader._process_update_query('dashboard_file', 'file_id',
+                    {'name': 'Study', 'query': STUDY_QUERY}, {'file_id': {'type': 'keyword'}})
+        message = '\n'.join(captured.output)
+        self.assertIn("Update query 'Study' failed: specific write failure", message)
+        self.assertNotIn('returned unmapped fields', message)
+
     def test_initial_retry_does_not_hide_failure_or_reset_count(self):
         loader = self.parent()
         args = ('test', 'Initial Query', 1, [{'file_id': '1'}], 'file_id', FILE_QUERY, 10)

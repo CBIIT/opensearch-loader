@@ -1,6 +1,7 @@
 """Read each query once and split only OpenSearch writes between four workers."""
 
 from concurrent.futures import ThreadPoolExecutor, wait
+from contextvars import copy_context
 import logging
 from time import monotonic
 from zlib import crc32
@@ -53,7 +54,7 @@ class ParallelWrites:
                            index_name, kwargs.get('query_name'), skipped,
                            len(documents), id_field, method)
         started = monotonic()
-        futures = [pool.submit(getattr(self.delegate, method), index_name, rows,
+        futures = [pool.submit(copy_context().run, getattr(self.delegate, method), index_name, rows,
                                id_field, **kwargs)
                    for pool, rows in zip(self.pools, partitions) if rows]
         if futures:
@@ -80,7 +81,7 @@ class ParallelWrites:
             for doc_id, page in rows:
                 self.delegate.upsert_document(index_name, doc_id, page)
 
-        futures = [pool.submit(write, rows)
+        futures = [pool.submit(copy_context().run, write, rows)
                    for pool, rows in zip(self.pools, partitions) if rows]
         if futures:
             wait(futures)

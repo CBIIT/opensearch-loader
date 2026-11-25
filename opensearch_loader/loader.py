@@ -5,7 +5,8 @@ import logging
 import time
 import os
 import yaml
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from contextvars import copy_context
 from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -242,6 +243,7 @@ class Loader:
             count = 'ERROR'
             timings = {}
             try:
+                logger.info('Index worker connecting: %s', spec['index_name'])
                 child = Loader(deepcopy(self.config))
                 # Model handlers can use their own object without cross-thread state.
                 if spec.get('type') == 'model':
@@ -267,14 +269,24 @@ class Loader:
                      'duration': elapsed, 'error': error is not None}, timings, error)
 
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='index-loader') as pool:
-            futures = {pool.submit(run, spec): i for i, spec in enumerate(indices)}
-            for future in as_completed(futures):
-                stats, timings, error = future.result()
-                results[futures[future]] = stats
-                for key, values in timings.items():
-                    self.query_timings[key].extend(values)
-                if error is not None:
-                    failures.append((stats['index_name'], error))
+            # Each task needs its own context: Prefect associates logs with the
+            # flow run through context variables, not ordinary thread locals.
+            futures = {pool.submit(copy_context().run, run, spec): i
+                       for i, spec in enumerate(indices)}
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, timeout=30, return_when=FIRST_COMPLETED)
+                for future in done:
+                    stats, timings, error = future.result()
+                    results[futures[future]] = stats
+                    for key, values in timings.items():
+                        self.query_timings[key].extend(values)
+                    if error is not None:
+                        failures.append((stats['index_name'], error))
+                    logger.info('Index result received: %s status=%s wall=%.3fs',
+                                stats['index_name'], 'failed' if error else 'completed', stats['duration'])
+                logger.info('Parallel index progress: finished=%s/%s pending=%s elapsed=%.1fs',
+                            len(results), len(indices), len(pending), time.monotonic() - started)
         self.index_stats.extend(results[i] for i in range(len(indices)))
         self._print_summary(time.monotonic() - started)
         self._save_query_timings()
