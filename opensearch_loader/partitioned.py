@@ -39,8 +39,19 @@ class ParallelWrites:
 
     def _write(self, method, index_name, documents, id_field, **kwargs):
         partitions = [[] for _ in range(WRITE_WORKERS)]
+        skipped = 0
         for document in documents:
-            partitions[partition_for_id(document.get(id_field))].append(document)
+            doc_id = document.get(id_field)
+            # Match bulk_upsert/_process_update_batch: optional graph matches
+            # can yield rows with no target document. Skip these before routing.
+            if not doc_id:
+                skipped += 1
+                continue
+            partitions[partition_for_id(doc_id)].append(document)
+        if skipped:
+            logger.warning("%s:%s: Skipping %s/%s rows with missing or empty %s before parallel %s",
+                           index_name, kwargs.get('query_name'), skipped,
+                           len(documents), id_field, method)
         started = monotonic()
         futures = [pool.submit(getattr(self.delegate, method), index_name, rows,
                                id_field, **kwargs)
@@ -49,8 +60,8 @@ class ParallelWrites:
             wait(futures)
             for future in futures:
                 future.result()
-        logger.info("%s:%s: Parallel %s completed: documents=%s workers=%s split=%s wall=%.3fs",
-                    index_name, kwargs.get('query_name'), method, len(documents),
+        logger.info("%s:%s: Parallel %s completed: documents=%s skipped=%s workers=%s split=%s wall=%.3fs",
+                    index_name, kwargs.get('query_name'), method, len(documents) - skipped, skipped,
                     WRITE_WORKERS, "/".join(str(len(rows)) for rows in partitions), monotonic() - started)
 
     def bulk_upsert(self, index_name, documents, id_field, **kwargs):

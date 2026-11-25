@@ -1032,7 +1032,7 @@ class Loader:
         except ValueError as e:
             query_display = query_name if query_name else 'unnamed'
             truncated_query = self._truncate_query(query)
-            logger.error(f"Index {index_name}: Update query '{query_display}' returned unmapped fields. Query: {truncated_query}. Skipping entire index.")
+            logger.error(f"Index {index_name}: Update query '{query_display}' failed: {e}. Query: {truncated_query}. Skipping entire index.")
             raise
         finally:
             # Record query execution time (only Memgraph query time, not OpenSearch operations)
