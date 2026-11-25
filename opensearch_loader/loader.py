@@ -5,6 +5,8 @@ import logging
 import time
 import os
 import yaml
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -43,14 +45,19 @@ class Loader:
         # Initialize OpenSearch client
         os_config = config.get_opensearch_config()
         host = os_config.get('host', 'http://localhost:9200')
-        self.opensearch = OpenSearchClient(
-            host=host,
-            use_ssl=os_config.get('use_ssl', False),
-            verify_certs=os_config.get('verify_certs', False),
-            username=os_config.get('username'),
-            password=os_config.get('password')
-        )
+        try:
+            self.opensearch = OpenSearchClient(
+                host=host,
+                use_ssl=os_config.get('use_ssl', False),
+                verify_certs=os_config.get('verify_certs', False),
+                username=os_config.get('username'),
+                password=os_config.get('password')
+            )
         
+        except Exception:
+            self.memgraph.close()
+            raise
+
         # Statistics tracking
         self.index_stats: List[Dict[str, Any]] = []
         # Query timing: key is "index:query_name", value is list of execution times
@@ -61,8 +68,10 @@ class Loader:
     
     def close(self):
         """Close all client connections."""
-        self.memgraph.close()
-        self.opensearch.client.close()
+        try:
+            self.memgraph.close()
+        finally:
+            self.opensearch.client.close()
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds into minutes:seconds format.
@@ -165,6 +174,13 @@ class Loader:
             else:
                 logger.debug("Model files configured but no model indices in selected/filtered indices, skipping model initialization")
         
+        index_workers = self.config.get('index_workers', 4)
+        if isinstance(index_workers, bool) or not isinstance(index_workers, int) or index_workers < 1:
+            raise ValueError('index_workers must be a positive integer')
+        if not selected_indices and index_workers > 1:
+            self._load_indices_parallel(indices, index_workers)
+            return
+
         start_time = time.time()
         
         # Process each index
@@ -209,6 +225,62 @@ class Loader:
         # Save query timings
         self._save_query_timings()
     
+    def _load_indices_parallel(self, indices, workers):
+        """Run independent indexes with isolated clients and parent-owned summaries."""
+        names = [spec.get('index_name', '').strip() for spec in indices]
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise ValueError('Parallel index loading requires unique nonempty index names')
+        started = time.monotonic()
+        results = {}
+        failures = []
+        logger.info('Parallel index loading started: indexes=%s index_workers=%s', len(indices), workers)
+
+        def run(spec):
+            child = None
+            begin = time.monotonic()
+            error = None
+            count = 'ERROR'
+            timings = {}
+            try:
+                child = Loader(deepcopy(self.config))
+                # Model handlers can use their own object without cross-thread state.
+                if spec.get('type') == 'model':
+                    child.model = deepcopy(self.model)
+                logger.info('Index worker started: %s', spec['index_name'])
+                count = child._process_index(deepcopy(spec))
+            except Exception as exc:
+                error = exc
+                logger.exception('Index worker failed: %s', spec['index_name'])
+            finally:
+                if child is not None:
+                    timings = dict(child.query_timings)
+                    try:
+                        child.close()
+                    except Exception as exc:
+                        error = error or exc
+                        logger.exception('Index worker cleanup failed: %s', spec['index_name'])
+            elapsed = time.monotonic() - begin
+            logger.info('Index worker finished: %s status=%s wall=%.3fs',
+                        spec['index_name'], 'failed' if error else 'completed', elapsed)
+            return ({'index_name': spec['index_name'],
+                     'document_count': 'ERROR' if error else count,
+                     'duration': elapsed, 'error': error is not None}, timings, error)
+
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='index-loader') as pool:
+            futures = {pool.submit(run, spec): i for i, spec in enumerate(indices)}
+            for future in as_completed(futures):
+                stats, timings, error = future.result()
+                results[futures[future]] = stats
+                for key, values in timings.items():
+                    self.query_timings[key].extend(values)
+                if error is not None:
+                    failures.append((stats['index_name'], error))
+        self.index_stats.extend(results[i] for i in range(len(indices)))
+        self._print_summary(time.monotonic() - started)
+        self._save_query_timings()
+        if failures:
+            raise RuntimeError('Failed index loads: ' + ', '.join(name for name, _ in failures)) from failures[0][1]
+
     def _process_index(self, index_config: Dict[str, Any]) -> int:
         """Process a single index.
         
