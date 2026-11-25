@@ -74,3 +74,17 @@ deployments:
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
+
+  - name: gc-memgraph-profile
+    version: null
+    tags: []
+    description: "Read-only: time one page of selected loader queries and show PROFILE plans."
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/memgraph_profile.py:memgraph_profile
+    parameters:
+      secret_name: "gen/amit-opensearch"
+      monorepo_branch: "4.9.0"
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
