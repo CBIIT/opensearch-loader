@@ -4,9 +4,10 @@ Only _count, _mapping, scroll/_search and _mget are called, so neither domain is
 """
 
 import json
+import time
 from collections import Counter, defaultdict
 
-from opensearchpy.helpers import scan
+from opensearchpy.exceptions import TransportError
 
 from bento.common.secret_manager import get_secret
 from prefect import flow
@@ -15,6 +16,34 @@ from .opensearch_client import OpenSearchClient
 
 BATCH = 1000
 EXAMPLES = 3
+
+
+def _retry(call, *args, **kwargs):
+    """Retry a read when the domain answers 429, backing off up to about two minutes."""
+    for attempt in range(8):
+        try:
+            return call(*args, **kwargs)
+        except TransportError as exc:
+            if exc.status_code != 429 or attempt == 7:
+                raise
+            time.sleep(min(2 ** attempt, 60))
+
+
+def _scroll(client, index, size, source=True):
+    """Scroll through every hit, retrying throttled pages."""
+    page = _retry(client.search, index=index, scroll="10m", size=size, _source=source,
+                  body={"query": {"match_all": {}}, "sort": ["_doc"]})
+    scroll_id = page["_scroll_id"]
+    try:
+        while page["hits"]["hits"]:
+            yield from page["hits"]["hits"]
+            page = _retry(client.scroll, scroll_id=scroll_id, scroll="10m")
+            scroll_id = page["_scroll_id"]
+    finally:
+        try:
+            client.clear_scroll(scroll_id=scroll_id)
+        except TransportError:
+            pass
 
 
 def _client(secret_name):
@@ -28,8 +57,7 @@ def _properties(client, index):
 
 
 def _ids(client, index):
-    return {hit["_id"] for hit in scan(client, index=index, query={"query": {"match_all": {}}},
-                                       _source=False, size=5000)}
+    return {hit["_id"] for hit in _scroll(client, index, 5000, source=False)}
 
 
 def _short(value):
@@ -67,7 +95,7 @@ def compare_indices(reference_secret: str = "gen/dev2-cdk", candidate_secret: st
 
     def check(rows):
         nonlocal compared, differing
-        found = ref.mget(index=index, body={"ids": [doc_id for doc_id, _ in rows]})["docs"]
+        found = _retry(ref.mget, index=index, body={"ids": [doc_id for doc_id, _ in rows]})["docs"]
         for (doc_id, cand_doc), ref_hit in zip(rows, found, strict=True):
             if not ref_hit.get("found"):
                 continue
@@ -81,7 +109,7 @@ def compare_indices(reference_secret: str = "gen/dev2-cdk", candidate_secret: st
                 if len(examples[field]) < EXAMPLES:
                     examples[field].append((doc_id, _short(ref_doc.get(field)), _short(cand_doc.get(field))))
 
-    for hit in scan(cand, index=index, query={"query": {"match_all": {}}}, size=BATCH):
+    for hit in _scroll(cand, index, BATCH):
         batch.append((hit["_id"], hit["_source"]))
         if len(batch) == BATCH:
             check(batch)
