@@ -59,3 +59,18 @@ deployments:
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
+
+  - name: gc-memgraph-inspect
+    version: null
+    tags: []
+    description: "Read-only: running transactions, indexes, storage info and settings."
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/memgraph_inspect.py:memgraph_inspect
+    parameters:
+      secret_name: "gen/amit-opensearch"
+      samples: 6
+      interval_seconds: 15
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
