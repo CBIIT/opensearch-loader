@@ -7,7 +7,6 @@ push: null
 
 pull:
   - prefect.deployments.steps.git_clone:
-      id: clone-step
       repository: https://github.com/CBIIT/opensearch-loader.git
       branch: write-once-merge
       include_submodules: True
@@ -15,7 +14,6 @@ pull:
       directory: "/opt/prefect/opensearch-loader-write-once-merge"
   - prefect.deployments.steps.pip_install_requirements:
       requirements_file: requirements.txt
-      directory: "{{ clone-step.directory }}"
       stream_output: False
 
 deployments:
