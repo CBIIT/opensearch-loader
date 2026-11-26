@@ -1,7 +1,11 @@
+import json
 import os
+import random
 import unittest
 from datetime import date, datetime
+from unittest import mock
 
+from opensearch_loader import merge
 from opensearch_loader.merge import MergeStore, deep_merge
 
 
@@ -23,7 +27,6 @@ class MergeStoreTests(unittest.TestCase):
         self.store.close()
 
     def docs(self):
-        import json
         return {i: json.loads(d) for i, d in self.store.documents()}
 
     def test_initial_skips_missing_ids_and_last_row_wins(self):
@@ -48,6 +51,36 @@ class MergeStoreTests(unittest.TestCase):
     def test_dates_serialize_like_opensearch_py(self):
         self.store.put_initial([{'id': 'a', 'd': date(2026, 1, 2), 't': datetime(2026, 1, 2, 3, 4, 5)}], 'id')
         self.assertEqual(self.docs()['a'], {'id': 'a', 'd': '2026-01-02', 't': '2026-01-02T03:04:05'})
+
+    def test_repeated_ids_in_one_page_merge_in_order(self):
+        self.store.put_initial([{'id': 'a', 'o': {'x': 0}}], 'id')
+        merged, dropped = self.store.apply_update(
+            [{'id': 'a', 'o': {'x': 1}, 'l': [1]}, {'id': 'a', 'o': {'y': 2}}, {'id': 'a', 'l': [3]}], 'id')
+        self.assertEqual((merged, dropped), (3, 0))
+        self.assertEqual(self.docs()['a'], {'id': 'a', 'o': {'x': 1, 'y': 2}, 'l': [3]})
+
+    def test_matches_row_by_row_merge_across_chunk_boundaries(self):
+        rng = random.Random(7)
+        initial = [{'id': f'f{i}', 'v': i, 'o': {'k': i}} for i in range(50)]
+        self.store.put_initial(initial, 'id')
+        expected = {r['id']: json.loads(json.dumps(r)) for r in initial}
+        with mock.patch.object(merge, 'UPDATE_CHUNK_ROWS', 7):
+            for _ in range(5):
+                rows = [{'id': f'f{rng.randrange(60)}', 'o': {f'k{rng.randrange(3)}': rng.random()},
+                         'l': [rng.randrange(9)]} for _ in range(40)]
+                merged, dropped = self.store.apply_update(rows, 'id')
+                known = [r for r in rows if r['id'] in expected]
+                for r in known:
+                    deep_merge(expected[r['id']], {k: v for k, v in r.items() if k != 'id'})
+                self.assertEqual((merged, dropped), (len(known), len(rows) - len(known)))
+        self.assertEqual(self.docs(), expected)
+
+    def test_timings_reset(self):
+        self.store.put_initial([{'id': 'a', 'v': 1}], 'id')
+        self.store.apply_update([{'id': 'a', 'v': 2}], 'id')
+        split = self.store.reset_timings()
+        self.assertEqual(set(split), {'sql_read', 'json', 'merge', 'sql_write'})
+        self.assertTrue(all(v == 0 for v in self.store.timings.values()))
 
     def test_file_removed_on_close(self):
         store = MergeStore(name='gone')
