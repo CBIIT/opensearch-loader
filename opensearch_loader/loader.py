@@ -5,9 +5,6 @@ import logging
 import time
 import os
 import yaml
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-from contextvars import copy_context
-from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -175,13 +172,6 @@ class Loader:
             else:
                 logger.debug("Model files configured but no model indices in selected/filtered indices, skipping model initialization")
         
-        index_workers = self.config.get('index_workers', 4)
-        if isinstance(index_workers, bool) or not isinstance(index_workers, int) or index_workers < 1:
-            raise ValueError('index_workers must be a positive integer')
-        if not selected_indices and index_workers > 1:
-            self._load_indices_parallel(indices, index_workers)
-            return
-
         start_time = time.time()
         
         # Process each index
@@ -226,73 +216,6 @@ class Loader:
         # Save query timings
         self._save_query_timings()
     
-    def _load_indices_parallel(self, indices, workers):
-        """Run independent indexes with isolated clients and parent-owned summaries."""
-        names = [spec.get('index_name', '').strip() for spec in indices]
-        if any(not name for name in names) or len(names) != len(set(names)):
-            raise ValueError('Parallel index loading requires unique nonempty index names')
-        started = time.monotonic()
-        results = {}
-        failures = []
-        logger.info('Parallel index loading started: indexes=%s index_workers=%s', len(indices), workers)
-
-        def run(spec):
-            child = None
-            begin = time.monotonic()
-            error = None
-            count = 'ERROR'
-            timings = {}
-            try:
-                logger.info('Index worker connecting: %s', spec['index_name'])
-                child = Loader(deepcopy(self.config))
-                # Model handlers can use their own object without cross-thread state.
-                if spec.get('type') == 'model':
-                    child.model = deepcopy(self.model)
-                logger.info('Index worker started: %s', spec['index_name'])
-                count = child._process_index(deepcopy(spec))
-            except Exception as exc:
-                error = exc
-                logger.exception('Index worker failed: %s', spec['index_name'])
-            finally:
-                if child is not None:
-                    timings = dict(child.query_timings)
-                    try:
-                        child.close()
-                    except Exception as exc:
-                        error = error or exc
-                        logger.exception('Index worker cleanup failed: %s', spec['index_name'])
-            elapsed = time.monotonic() - begin
-            logger.info('Index worker finished: %s status=%s wall=%.3fs',
-                        spec['index_name'], 'failed' if error else 'completed', elapsed)
-            return ({'index_name': spec['index_name'],
-                     'document_count': 'ERROR' if error else count,
-                     'duration': elapsed, 'error': error is not None}, timings, error)
-
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='index-loader') as pool:
-            # Each task needs its own context: Prefect associates logs with the
-            # flow run through context variables, not ordinary thread locals.
-            futures = {pool.submit(copy_context().run, run, spec): i
-                       for i, spec in enumerate(indices)}
-            pending = set(futures)
-            while pending:
-                done, pending = wait(pending, timeout=30, return_when=FIRST_COMPLETED)
-                for future in done:
-                    stats, timings, error = future.result()
-                    results[futures[future]] = stats
-                    for key, values in timings.items():
-                        self.query_timings[key].extend(values)
-                    if error is not None:
-                        failures.append((stats['index_name'], error))
-                    logger.info('Index result received: %s status=%s wall=%.3fs',
-                                stats['index_name'], 'failed' if error else 'completed', stats['duration'])
-                logger.info('Parallel index progress: finished=%s/%s pending=%s elapsed=%.1fs',
-                            len(results), len(indices), len(pending), time.monotonic() - started)
-        self.index_stats.extend(results[i] for i in range(len(indices)))
-        self._print_summary(time.monotonic() - started)
-        self._save_query_timings()
-        if failures:
-            raise RuntimeError('Failed index loads: ' + ', '.join(name for name, _ in failures)) from failures[0][1]
-
     def _process_index(self, index_config: Dict[str, Any]) -> int:
         """Process a single index.
         
@@ -1167,6 +1090,10 @@ class Loader:
         
         lines.append("-" * 80)
         lines.append(f"{'Total':<40} {'':<15} {self._format_time(total_time):<15}")
+        failed_count = sum(bool(stat['error']) for stat in self.index_stats)
+        lines.append(f"Succeeded: {len(self.index_stats) - failed_count}  Failed: {failed_count}")
+        if failed_count:
+            lines.append('INCOMPLETE: elapsed time includes failed index loads.')
         lines.append("=" * 80)
         
         summary_text = "\n".join(lines)

@@ -1,4 +1,4 @@
-"""Read each query once and split only OpenSearch writes between four workers."""
+"""Read each query once and split OpenSearch writes between ID-routed workers."""
 
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextvars import copy_context
@@ -10,16 +10,17 @@ logger = logging.getLogger("OpenSearchLoader")
 WRITE_WORKERS = 4
 
 
-def partition_for_id(value):
+def partition_for_id(value, workers=None):
     """Stable assignment for numeric IDs, UUIDs, and other nonempty IDs."""
     if value is None or not str(value):
         raise ValueError("Parallel writes require a nonempty document ID")
     value = str(value).lower()
+    workers = WRITE_WORKERS if workers is None else workers
     if value.isascii() and value.isdecimal():
-        return int(value) % WRITE_WORKERS
+        return int(value) % workers
     if value[-1] in "0123456789abcdef":
-        return int(value[-1], 16) % WRITE_WORKERS
-    return crc32(value.encode('utf-8')) % WRITE_WORKERS
+        return int(value[-1], 16) % workers
+    return crc32(value.encode('utf-8')) % workers
 
 
 class ParallelWrites:
@@ -30,16 +31,19 @@ class ParallelWrites:
     The same ID always goes to the same single-thread executor, in input order.
     """
 
-    def __init__(self, client):
+    def __init__(self, client, workers=None):
         self.delegate = client
+        self.workers = WRITE_WORKERS if workers is None else workers
+        if isinstance(self.workers, bool) or not isinstance(self.workers, int) or self.workers < 1:
+            raise ValueError('write_workers must be a positive integer')
         self.pools = [ThreadPoolExecutor(max_workers=1,
-                      thread_name_prefix=f"opensearch-write-{p}") for p in range(WRITE_WORKERS)]
+                      thread_name_prefix=f"opensearch-write-{p}") for p in range(self.workers)]
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
 
     def _write(self, method, index_name, documents, id_field, **kwargs):
-        partitions = [[] for _ in range(WRITE_WORKERS)]
+        partitions = [[] for _ in range(self.workers)]
         skipped = 0
         for document in documents:
             doc_id = document.get(id_field)
@@ -48,7 +52,7 @@ class ParallelWrites:
             if not doc_id:
                 skipped += 1
                 continue
-            partitions[partition_for_id(doc_id)].append(document)
+            partitions[partition_for_id(doc_id, self.workers)].append(document)
         if skipped:
             logger.warning("%s:%s: Skipping %s/%s rows with missing or empty %s before parallel %s",
                            index_name, kwargs.get('query_name'), skipped,
@@ -63,7 +67,7 @@ class ParallelWrites:
                 future.result()
         logger.info("%s:%s: Parallel %s completed: documents=%s skipped=%s workers=%s split=%s wall=%.3fs",
                     index_name, kwargs.get('query_name'), method, len(documents) - skipped, skipped,
-                    WRITE_WORKERS, "/".join(str(len(rows)) for rows in partitions), monotonic() - started)
+                    self.workers, "/".join(str(len(rows)) for rows in partitions), monotonic() - started)
 
     def bulk_upsert(self, index_name, documents, id_field, **kwargs):
         self._write('bulk_upsert', index_name, documents, id_field, **kwargs)
@@ -73,9 +77,9 @@ class ParallelWrites:
 
     def upsert_pages(self, index_name, pages):
         """Keep about-page IDs and sources unchanged while writing concurrently."""
-        partitions = [[] for _ in range(WRITE_WORKERS)]
+        partitions = [[] for _ in range(self.workers)]
         for doc_id, page in pages:
-            partitions[partition_for_id(doc_id)].append((doc_id, page))
+            partitions[partition_for_id(doc_id, self.workers)].append((doc_id, page))
 
         def write(rows):
             for doc_id, page in rows:
@@ -94,16 +98,16 @@ class ParallelWrites:
 
 
 def load_partitioned(loader, spec):
-    """Run any index handler with four ID-partitioned write workers."""
+    """Run any index handler with configurable ID-partitioned write workers."""
     original = loader.opensearch
-    writes = ParallelWrites(original)
+    writes = ParallelWrites(original, loader.config.get('write_workers'))
     previous_mode = getattr(loader, 'partition_mode', False)
     started = monotonic()
     try:
         loader.opensearch = writes
         loader.partition_mode = True  # Propagate validation failures.
         logger.info("Parallel load started: index=%s workers=%s reader_pipelines=1",
-                    spec['index_name'], WRITE_WORKERS)
+                    spec['index_name'], writes.workers)
         # The normal index-creation configuration applies. All workers write to
         # the same index, and each batch completes before the next one starts.
         count = loader._process_index_serial(spec)
@@ -112,5 +116,5 @@ def load_partitioned(loader, spec):
         loader.opensearch = original
         loader.partition_mode = previous_mode
     logger.info("Parallel load completed: index=%s workers=%s documents=%s wall=%.1fs",
-                spec['index_name'], WRITE_WORKERS, count, monotonic() - started)
+                spec['index_name'], writes.workers, count, monotonic() - started)
     return count

@@ -32,7 +32,7 @@ def opensearch_loader_prefect(
     indices_file,
     selected_indices,
     parallel_writes: bool = False,
-    index_workers: int = 4,
+    write_workers: int = 4,
 ):
     secret = get_secret(secret_name)
     setup_logging(verbose=False)
@@ -67,7 +67,7 @@ def opensearch_loader_prefect(
         "allow_index_creation": True,
         "selected_indices": selected_indices,
         "parallel_writes": parallel_writes,
-        "index_workers": index_workers,
+        "write_workers": write_workers,
         "about_file": about_file_path,
         "model_files": model_files,
     }

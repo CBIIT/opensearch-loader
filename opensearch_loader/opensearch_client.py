@@ -1,9 +1,11 @@
 """OpenSearch client for index management and document upsert."""
 
 import logging
+import time
 from typing import List, Dict, Any, Optional
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.helpers import bulk
+from opensearchpy.exceptions import RequestError
 from requests_aws4auth import AWS4Auth
 from botocore.session import Session
 
@@ -60,14 +62,40 @@ class OpenSearchClient:
         """
         return self.client.indices.exists(index=index_name)
     
-    def delete_index(self, index_name: str):
+    def delete_index(self, index_name: str, snapshot_wait_seconds: float = 1800,
+                     snapshot_retry_seconds: float = 30):
         """Delete an index.
         
         Args:
             index_name: Name of the index to delete
+            snapshot_wait_seconds: Maximum wait for a snapshot to release the index
+            snapshot_retry_seconds: Delay between snapshot-conflict retries
         """
+        if snapshot_wait_seconds < 0 or snapshot_retry_seconds <= 0:
+            raise ValueError('Snapshot wait must be nonnegative and retry interval positive')
         if self.index_exists(index_name):
-            self.client.indices.delete(index=index_name)
+            started = time.monotonic()
+            deadline = started + snapshot_wait_seconds
+            while True:
+                try:
+                    self.client.indices.delete(index=index_name)
+                    break
+                except RequestError as exc:
+                    # A snapshot temporarily blocks deletion. Do not cancel the
+                    # snapshot or retry unrelated permission/mapping errors.
+                    if exc.error != 'snapshot_in_progress_exception':
+                        raise
+                    now = time.monotonic()
+                    remaining = deadline - now
+                    if remaining <= 0:
+                        logger.error('Index %s is still being snapshotted after %.1fs; '
+                                     'index recreation failed', index_name, now - started)
+                        raise
+                    delay = min(snapshot_retry_seconds, remaining)
+                    logger.warning('Index %s is being snapshotted; waiting %.1fs before '
+                                   'retrying deletion (waited=%.1fs, remaining=%.1fs)',
+                                   index_name, delay, now - started, remaining)
+                    time.sleep(delay)
             logger.info(f"Deleted index: {index_name}")
         else:
             logger.info(f"Index does not exist, skipping deletion: {index_name}")
