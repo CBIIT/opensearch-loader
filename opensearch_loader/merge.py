@@ -197,22 +197,33 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
     store = MergeStore(loader.config.get('merge_dir'), name=index_name)
     started = time.monotonic()
     try:
+        merge_time = 0.0
         for page in _run_query(loader, index_name, index_config['initial_query'], "Initial Query", mapping, False):
+            t = time.monotonic()
             _, skipped = store.put_initial(page, id_field)
+            merge_time += time.monotonic() - t
             if skipped:
                 logger.warning(f"{index_name}:Initial Query: skipped {skipped} rows with missing {id_field}")
         total = store.count()
-        logger.info(f"{index_name}:Initial Query: {total} documents staged")
+        memgraph_total, merge_total = loader.memgraph.last_query_time, merge_time
+        logger.info(f"{index_name}:Initial Query: {total} documents staged; "
+                    f"memgraph={loader.memgraph.last_query_time:.1f}s merge={merge_time:.1f}s")
 
         test_mode = loader.config.get_test_mode()
         for update in index_config.get('update_queries', []):
             name = update.get('name') or 'unnamed'
             merged = dropped = 0
+            merge_time = 0.0
             for page in _run_query(loader, index_name, update, name, mapping, test_mode):
+                t = time.monotonic()
                 m, d = store.apply_update(page, id_field)
+                merge_time += time.monotonic() - t
                 merged += m
                 dropped += d
-            logger.info(f"{index_name}:{name}: merged {merged} rows, dropped {dropped}")
+            memgraph_total += loader.memgraph.last_query_time
+            merge_total += merge_time
+            logger.info(f"{index_name}:{name}: merged {merged} rows, dropped {dropped}; "
+                        f"memgraph={loader.memgraph.last_query_time:.1f}s merge={merge_time:.1f}s")
         merge_seconds = time.monotonic() - started
 
         # Delete and recreate only now, after all Memgraph work, so the index is missing for minutes, not hours.
@@ -233,7 +244,8 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
             raise RuntimeError(f"{index_name}: wrote {written} of {total} documents")
         write_seconds = time.monotonic() - write_started
         logger.info(f"{index_name}: {written} documents written once; "
-                    f"memgraph+merge={merge_seconds:.0f}s opensearch_write={write_seconds:.0f}s")
+                    f"memgraph+merge={merge_seconds:.0f}s (memgraph={memgraph_total:.0f}s merge={merge_total:.0f}s) "
+                    f"opensearch_write={write_seconds:.0f}s")
         return written
     finally:
         store.close()
