@@ -26,8 +26,7 @@ WRITE_BATCH_BYTES = 10 * 1024 * 1024
 WRITE_THREADS = 4
 DELETE_RETRIES = 20
 DELETE_RETRY_SECONDS = 30
-UPDATE_CHUNK_ROWS = 5000  # well under SQLite's limit on query parameters
-TIMING_KEYS = ("sql_read", "json", "merge", "sql_write")
+CACHE_KIB = 256 * 1024  # SQLite page cache for reading pieces back in document order
 
 
 def _json_default(value):
@@ -57,7 +56,13 @@ def deep_merge(target: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any
 
 
 class MergeStore:
-    """Documents keyed by ID in a local SQLite file, deleted on close."""
+    """Documents built from pieces in a local SQLite file, deleted on close.
+
+    Each query row is saved once as a small piece (its fields as JSON) tagged with the
+    document number and arrival order. Documents are assembled only when read: pieces are
+    merged in arrival order and the result is serialized once. This avoids parsing and
+    re-serializing every growing document on every pass.
+    """
 
     def __init__(self, directory: str | None = None, name: str = "merge"):
         handle, self.path = tempfile.mkstemp(prefix=f"{name}-", suffix=".sqlite", dir=directory)
@@ -65,90 +70,79 @@ class MergeStore:
         self.conn = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=OFF")
         self.conn.execute("PRAGMA synchronous=OFF")
-        self.conn.execute("CREATE TABLE docs (id TEXT PRIMARY KEY, doc TEXT NOT NULL)")
-        self.timings = dict.fromkeys(TIMING_KEYS, 0.0)
+        self.conn.execute("PRAGMA temp_store=MEMORY")
+        self.conn.execute(f"PRAGMA cache_size=-{CACHE_KIB}")
+        self.conn.execute("CREATE TABLE pieces (seq INTEGER PRIMARY KEY, doc INTEGER NOT NULL, piece TEXT NOT NULL)")
+        self.numbers: dict[str, int] = {}  # document ID -> current document number
+        self.ids: list[str] = []  # document number -> document ID
+        self.timings = {"index": 0.0, "assemble": 0.0}
+
+    def _insert(self, pieces: list[tuple[int, str]]):
+        self.conn.execute("BEGIN")
+        self.conn.executemany("INSERT INTO pieces (doc, piece) VALUES (?, ?)", pieces)
+        self.conn.execute("COMMIT")
 
     def put_initial(self, rows: Iterable[dict[str, Any]], id_field: str) -> tuple[int, int]:
-        """Store initial-query rows; a repeated ID replaces the earlier row, like a bulk index."""
-        stored = skipped = 0
-        self.conn.execute("BEGIN")
+        """Start documents from initial-query rows; a repeated ID replaces the earlier row, like a bulk index."""
+        pieces = []
+        skipped = 0
         for row in rows:
             doc_id = row.get(id_field)
             if not doc_id:
                 skipped += 1
                 continue
-            self.conn.execute("INSERT OR REPLACE INTO docs VALUES (?, ?)",
-                              (str(doc_id), _dumps(row)))
-            stored += 1
-        self.conn.execute("COMMIT")
-        return stored, skipped
+            # A repeated ID gets a new number; pieces under the old number are never read.
+            self.numbers[str(doc_id)] = number = len(self.ids)
+            self.ids.append(str(doc_id))
+            pieces.append((number, _dumps(row)))
+        self._insert(pieces)
+        return len(pieces), skipped
 
     def apply_update(self, rows: Iterable[dict[str, Any]], id_field: str) -> tuple[int, int]:
-        """Merge update rows into stored documents; rows for unknown IDs are dropped (doc_as_upsert=False).
-
-        Rows are handled in chunks: one SELECT and one executemany UPDATE per chunk. Rows within a
-        chunk are applied in order, so repeated IDs merge exactly as they would one row at a time.
-        """
-        merged = dropped = 0
-        chunk: list[tuple[str, dict[str, Any]]] = []
-        self.conn.execute("BEGIN")
+        """Save update rows as pieces; rows for unknown IDs are dropped (doc_as_upsert=False)."""
+        pieces = []
+        dropped = 0
         for row in rows:
             doc_id = row.get(id_field)
             fields = {k: v for k, v in row.items() if k != id_field}
-            if not doc_id or not fields:
+            number = self.numbers.get(str(doc_id)) if doc_id else None
+            if number is None or not fields:
                 dropped += 1
                 continue
-            chunk.append((str(doc_id), fields))
-            if len(chunk) >= UPDATE_CHUNK_ROWS:
-                m, d = self._merge_chunk(chunk)
-                merged, dropped, chunk = merged + m, dropped + d, []
-        if chunk:
-            m, d = self._merge_chunk(chunk)
-            merged, dropped = merged + m, dropped + d
-        self.conn.execute("COMMIT")
-        return merged, dropped
-
-    def _merge_chunk(self, chunk: list[tuple[str, dict[str, Any]]]) -> tuple[int, int]:
-        """Read the chunk's documents in one query, merge in memory, and write the changed ones back."""
-        timings = self.timings
-        t = time.monotonic()
-        ids = list(dict.fromkeys(doc_id for doc_id, _ in chunk))
-        found = dict(self.conn.execute(
-            f"SELECT id, doc FROM docs WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall())
-        timings["sql_read"] += time.monotonic() - t
-
-        t = time.monotonic()
-        docs = {doc_id: json.loads(raw) for doc_id, raw in found.items()}
-        updates = [(doc_id, json.loads(_dumps(fields))) for doc_id, fields in chunk if doc_id in docs]
-        timings["json"] += time.monotonic() - t
-
-        t = time.monotonic()
-        touched = {}
-        for doc_id, fields in updates:
-            deep_merge(docs[doc_id], fields)
-            touched[doc_id] = docs[doc_id]
-        timings["merge"] += time.monotonic() - t
-
-        t = time.monotonic()
-        encoded = [(_dumps(doc), doc_id) for doc_id, doc in touched.items()]
-        timings["json"] += time.monotonic() - t
-
-        t = time.monotonic()
-        self.conn.executemany("UPDATE docs SET doc = ? WHERE id = ?", encoded)
-        timings["sql_write"] += time.monotonic() - t
-        return len(updates), len(chunk) - len(updates)
-
-    def reset_timings(self) -> dict[str, float]:
-        """Return the time split since the last reset and start a new one."""
-        previous, self.timings = self.timings, dict.fromkeys(TIMING_KEYS, 0.0)
-        return previous
+            pieces.append((number, _dumps(fields)))
+        self._insert(pieces)
+        return len(pieces), dropped
 
     def count(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+        return len(self.numbers)
 
     def documents(self) -> Iterator[tuple[str, str]]:
-        """Yield (id, JSON source) pairs in ID order."""
-        yield from self.conn.execute("SELECT id, doc FROM docs ORDER BY id")
+        """Yield (id, JSON source) pairs, each assembled from its pieces in arrival order."""
+        t = time.monotonic()
+        self.conn.execute("CREATE INDEX IF NOT EXISTS pieces_doc ON pieces (doc, seq)")
+        self.timings["index"] += time.monotonic() - t
+
+        def flush(number, doc):
+            doc_id = self.ids[number]
+            if self.numbers[doc_id] == number:
+                return doc_id, _dumps(doc)
+            return None
+
+        cursor = self.conn.execute("SELECT doc, piece FROM pieces ORDER BY doc, seq")
+        current, doc = None, None
+        t = time.monotonic()
+        for number, piece in cursor:
+            if number != current:
+                if current is not None and (out := flush(current, doc)):
+                    self.timings["assemble"] += time.monotonic() - t
+                    yield out
+                    t = time.monotonic()
+                current, doc = number, json.loads(piece)
+            else:
+                deep_merge(doc, json.loads(piece))
+        if current is not None and (out := flush(current, doc)):
+            self.timings["assemble"] += time.monotonic() - t
+            yield out
 
     def close(self):
         try:
@@ -265,9 +259,8 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
                 dropped += d
             memgraph_total += loader.memgraph.last_query_time
             merge_total += merge_time
-            split = " ".join(f"{k}={v:.1f}s" for k, v in store.reset_timings().items())
             logger.info(f"{index_name}:{name}: merged {merged} rows, dropped {dropped}; "
-                        f"memgraph={loader.memgraph.last_query_time:.1f}s merge={merge_time:.1f}s ({split})")
+                        f"memgraph={loader.memgraph.last_query_time:.1f}s merge={merge_time:.1f}s")
         merge_seconds = time.monotonic() - started
 
         # Delete and recreate only now, after all Memgraph work, so the index is missing for minutes, not hours.
@@ -289,7 +282,8 @@ def load_merged(loader, index_config: dict[str, Any]) -> int:
         write_seconds = time.monotonic() - write_started
         logger.info(f"{index_name}: {written} documents written once; "
                     f"memgraph+merge={merge_seconds:.0f}s (memgraph={memgraph_total:.0f}s merge={merge_total:.0f}s) "
-                    f"opensearch_write={write_seconds:.0f}s")
+                    f"opensearch_write={write_seconds:.0f}s (index_pieces={store.timings['index']:.0f}s "
+                    f"assemble={store.timings['assemble']:.0f}s)")
         return written
     finally:
         store.close()

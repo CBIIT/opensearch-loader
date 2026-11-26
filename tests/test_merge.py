@@ -3,9 +3,7 @@ import os
 import random
 import unittest
 from datetime import date, datetime
-from unittest import mock
 
-from opensearch_loader import merge
 from opensearch_loader.merge import MergeStore, deep_merge
 
 
@@ -64,23 +62,22 @@ class MergeStoreTests(unittest.TestCase):
         initial = [{'id': f'f{i}', 'v': i, 'o': {'k': i}} for i in range(50)]
         self.store.put_initial(initial, 'id')
         expected = {r['id']: json.loads(json.dumps(r)) for r in initial}
-        with mock.patch.object(merge, 'UPDATE_CHUNK_ROWS', 7):
-            for _ in range(5):
-                rows = [{'id': f'f{rng.randrange(60)}', 'o': {f'k{rng.randrange(3)}': rng.random()},
-                         'l': [rng.randrange(9)]} for _ in range(40)]
-                merged, dropped = self.store.apply_update(rows, 'id')
-                known = [r for r in rows if r['id'] in expected]
-                for r in known:
-                    deep_merge(expected[r['id']], {k: v for k, v in r.items() if k != 'id'})
-                self.assertEqual((merged, dropped), (len(known), len(rows) - len(known)))
+        for _ in range(5):
+            rows = [{'id': f'f{rng.randrange(60)}', 'o': {f'k{rng.randrange(3)}': rng.random()},
+                     'l': [rng.randrange(9)]} for _ in range(40)]
+            merged, dropped = self.store.apply_update(rows, 'id')
+            known = [r for r in rows if r['id'] in expected]
+            for r in known:
+                deep_merge(expected[r['id']], {k: v for k, v in r.items() if k != 'id'})
+            self.assertEqual((merged, dropped), (len(known), len(rows) - len(known)))
         self.assertEqual(self.docs(), expected)
 
-    def test_timings_reset(self):
-        self.store.put_initial([{'id': 'a', 'v': 1}], 'id')
-        self.store.apply_update([{'id': 'a', 'v': 2}], 'id')
-        split = self.store.reset_timings()
-        self.assertEqual(set(split), {'sql_read', 'json', 'merge', 'sql_write'})
-        self.assertTrue(all(v == 0 for v in self.store.timings.values()))
+    def test_updates_after_repeated_initial_id_apply_to_latest_row(self):
+        self.store.put_initial([{'id': 'a', 'v': 1, 'old': True}], 'id')
+        self.store.put_initial([{'id': 'a', 'v': 2}], 'id')
+        self.store.apply_update([{'id': 'a', 'w': 3}], 'id')
+        self.assertEqual(self.store.count(), 1)
+        self.assertEqual(self.docs(), {'a': {'id': 'a', 'v': 2, 'w': 3}})
 
     def test_file_removed_on_close(self):
         store = MergeStore(name='gone')
