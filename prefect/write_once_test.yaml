@@ -131,3 +131,16 @@ deployments:
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
+
+  - name: gc-memgraph-terminate
+    version: null
+    tags: []
+    description: "Terminate one Memgraph transaction by ID after checking its query text."
+    schedule: {}
+    flow_name: null
+    entrypoint: opensearch_loader/memgraph_terminate.py:memgraph_terminate
+    parameters:
+      secret_name: "gen/amit-opensearch"
+    work_pool:
+      name: cds-general-mgconsole-prefect-3.4.18-python3.12
+      work_queue_name: default
