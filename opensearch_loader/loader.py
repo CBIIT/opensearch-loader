@@ -26,7 +26,7 @@ OPENSEARCH_BATCH_BYTE_LIMIT = 15 * 1024 * 1024
 class Loader:
     """Main loader that orchestrates data synchronization."""
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, query_pool=None):
         """Initialize loader with configuration.
         
         Args:
@@ -36,12 +36,18 @@ class Loader:
         
         # Initialize Memgraph client
         mg_config = config.get_memgraph_config()
-        self.memgraph = MemgraphClient(
-            host=mg_config.get('host', 'localhost'),
-            port=mg_config.get('port', 7687),
-            username=mg_config.get('username'),
-            password=mg_config.get('password')
-        )
+        self._query_pool = query_pool
+        self._shared_writer = None
+        if query_pool is not None:
+            from .process_pipeline import ProcessQueries
+            self.memgraph = ProcessQueries(query_pool)
+        else:
+            self.memgraph = MemgraphClient(
+                host=mg_config.get('host', 'localhost'),
+                port=mg_config.get('port', 7687),
+                username=mg_config.get('username'),
+                password=mg_config.get('password')
+            )
         
         # Initialize OpenSearch client
         os_config = config.get_opensearch_config()
@@ -111,6 +117,12 @@ class Loader:
         return normalized[:max_length] + '...'
     
     def load(self):
+        if self.config.get('process_pipeline', False):
+            from .process_pipeline import load_with_processes
+            return load_with_processes(self)
+        return self._load()
+
+    def _load(self):
         """Load data from Memgraph to OpenSearch."""
         # Load index specification
         index_spec_file = self.config.get_index_spec_file()
@@ -178,7 +190,8 @@ class Loader:
         index_workers = self.config.get('index_workers', 1)
         if isinstance(index_workers, bool) or not isinstance(index_workers, int) or index_workers < 1:
             raise ValueError('index_workers must be a positive integer')
-        if not selected_indices and index_workers > 1:
+        if index_workers > 1 and len(indices) > 1 and (
+                not selected_indices or self.config.get('process_pipeline', False)):
             self._load_indices_parallel(indices, index_workers)
             return
 
@@ -202,7 +215,7 @@ class Loader:
                     'error': False
                 })
             except Exception as e:
-                if self.config.get('parallel_writes', False):
+                if self.config.get('parallel_writes', False) or self.config.get('process_pipeline', False):
                     raise
                 index_end_time = time.time()
                 index_duration = index_end_time - index_start_time
@@ -244,7 +257,10 @@ class Loader:
             timings = {}
             try:
                 logger.info('Index worker connecting: %s', spec['index_name'])
-                child = Loader(deepcopy(self.config))
+                query_pool = getattr(self, '_query_pool', None)
+                child = (Loader(deepcopy(self.config), query_pool=query_pool)
+                         if query_pool is not None else Loader(deepcopy(self.config)))
+                child._shared_writer = getattr(self, '_shared_writer', None)
                 # Model handlers can use their own object without cross-thread state.
                 if spec.get('type') == 'model':
                     child.model = deepcopy(self.model)
@@ -307,6 +323,16 @@ class Loader:
             raise ValueError("index_name is required in index configuration")
         
         logger.info(f"Starting index: {index_name}")
+        if getattr(self, '_shared_writer', None) is not None:
+            original = self.opensearch
+            previous = getattr(self, 'partition_mode', False)
+            self.opensearch = self._shared_writer
+            self.partition_mode = True
+            try:
+                return self._process_index_serial(index_config)
+            finally:
+                self.opensearch = original
+                self.partition_mode = previous
         if self.config.get('parallel_writes', False):
             from .partitioned import load_partitioned
             return load_partitioned(self, index_config)

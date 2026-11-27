@@ -34,7 +34,14 @@ def opensearch_loader_prefect(
     parallel_writes: bool = False,
     write_workers: int = 4,
     index_workers: int = 1,
+    process_pipeline: bool = False,
+    query_workers: int = 4,
 ):
+    """Load selected indexes; process_pipeline shares query/write subprocess pools.
+
+    index_workers controls simultaneous indexes, while query_workers and
+    write_workers cap subprocesses across the entire flow (not per index).
+    """
     secret = get_secret(secret_name)
     setup_logging(verbose=False)
     logger = logging.getLogger('OpenSearchLoader')
@@ -70,6 +77,8 @@ def opensearch_loader_prefect(
         "parallel_writes": parallel_writes,
         "write_workers": write_workers,
         "index_workers": index_workers,
+        "process_pipeline": process_pipeline,
+        "query_workers": query_workers,
         "about_file": about_file_path,
         "model_files": model_files,
     }
