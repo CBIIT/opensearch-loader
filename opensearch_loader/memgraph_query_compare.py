@@ -78,6 +78,8 @@ def memgraph_query_compare(secret_name: str = "gen/amit-opensearch", monorepo_br
     conn.autocommit = True
     # Rewrite first so a failing rewrite shows up before the long original pass.
     new_rows, new_seconds = _full_pass(conn, candidate, variables, size, "rewrite")
+    print(f"rewrite pass done: {new_seconds:.1f}s rows={len(new_rows)}")
+    time.sleep(5)  # let Prefect ship the logs before the long original pass starts
     old_rows, old_seconds = _full_pass(conn, original, variables, size, "original")
     conn.close()
 
