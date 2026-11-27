@@ -30,7 +30,7 @@ def memgraph_terminate(transaction_id: str, expected_text: str, secret_name: str
     text = target.get("query", "")
     query = " ".join((" ".join(map(str, text)) if isinstance(text, list) else str(text)).split())
     if " ".join(expected_text.split()) not in query:
-        raise ValueError(f"transaction {transaction_id} query does not contain the expected text: {query[:200]}")
+        raise ValueError(f"transaction {transaction_id} query does not contain the expected text: {query[:700]}")
     cursor = conn.cursor()
     cursor.execute(f'TERMINATE TRANSACTIONS "{transaction_id}";')
     print(f"terminate result: {cursor.fetchall()}")
