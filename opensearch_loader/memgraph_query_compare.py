@@ -17,15 +17,15 @@ from prefect import flow
 # File Diagnoses: drop duplicate participants per file before looking up diagnoses, so each
 # participant's diagnoses are read once instead of once per shared file. Output is meant to be unchanged.
 FILE_DIAGNOSES_REWRITE = [[
-    'OPTIONAL MATCH (f:file)-->(p)\n'
-    'WITH DISTINCT f, p.study_participant_id AS study_participant_id, "Not specified in data" AS nsd, '
-    '"Not Applicable" AS na\n'
-    'OPTIONAL MATCH (f)-->(p:participant)<--(diag:diagnosis)\n',
-    'OPTIONAL MATCH (f:file)-->(p)\n'
-    'WITH DISTINCT f, p.study_participant_id AS study_participant_id\n'
-    'OPTIONAL MATCH (f)-->(p2:participant)\n'
-    'WITH DISTINCT study_participant_id, p2, "Not specified in data" AS nsd, "Not Applicable" AS na\n'
-    'OPTIONAL MATCH (p2)<--(diag:diagnosis)\n',
+    ('OPTIONAL MATCH (f:file)-->(p)\n'
+     'WITH DISTINCT f, p.study_participant_id AS study_participant_id, "Not specified in data" AS nsd, '
+     '"Not Applicable" AS na\n'
+     'OPTIONAL MATCH (f)-->(p:participant)<--(diag:diagnosis)\n'),
+    ('OPTIONAL MATCH (f:file)-->(p)\n'
+     'WITH DISTINCT f, p.study_participant_id AS study_participant_id\n'
+     'OPTIONAL MATCH (f)-->(p2:participant)\n'
+     'WITH DISTINCT study_participant_id, p2, "Not specified in data" AS nsd, "Not Applicable" AS na\n'
+     'OPTIONAL MATCH (p2)<--(diag:diagnosis)\n'),
 ]]
 
 
