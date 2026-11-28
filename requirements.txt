@@ -5,3 +5,4 @@ prefect
 boto3
 requests_aws4auth
 pymgclient
+confluent-kafka==2.6.1

@@ -301,17 +301,24 @@ def load_with_processes(loader):
     """Own exactly one shared set of workers for the complete flow run."""
     old_memgraph = loader.memgraph
     with ExitStack() as stack:
+        if loader.config.get('task_kafka', False):
+            from .task_kafka import TaskKafka
+            stack.enter_context(TaskKafka())
         query_pool = QueryPool(loader.config.get_memgraph_config(), loader.config.get('query_workers', 4))
         stack.callback(query_pool.close)
         writer_class = QueuedProcessWrites if loader.config.get('process_write_queue', False) else ProcessWrites
         options = {'queue_batches': loader.config.get('write_queue_batches', 10)} if writer_class is QueuedProcessWrites else {}
+        if loader.config.get('task_kafka', False):
+            from .kafka_transport import KafkaWrites
+            writer_class = KafkaWrites
+            options = {'queue_batches': loader.config.get('write_queue_batches', 10)}
         writer = writer_class(loader.opensearch, loader.config.get_opensearch_config(), loader.config.get('write_workers', 4), **options)
         stack.callback(writer.close)
         loader._query_pool = query_pool
         loader._shared_writer = writer
         loader.memgraph = ProcessQueries(query_pool)
-        logger.info('Process pipeline started: query_workers=%s write_workers=%s index_workers=%s kafka=false',
-                    len(query_pool.workers), writer.workers, loader.config.get('index_workers', 1))
+        logger.info('Process pipeline started: query_workers=%s write_workers=%s index_workers=%s kafka=%s',
+                    len(query_pool.workers), writer.workers, loader.config.get('index_workers', 1), loader.config.get('task_kafka', False))
         try:
             return loader._load()
         finally:

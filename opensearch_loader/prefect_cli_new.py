@@ -38,6 +38,7 @@ def opensearch_loader_prefect(
     query_workers: int = 4,
     process_write_queue: bool = False,
     write_queue_batches: int = 10,
+    task_kafka: bool = False,
 ):
     """Load selected indexes; process_pipeline shares query/write subprocess pools.
 
@@ -79,7 +80,8 @@ def opensearch_loader_prefect(
         "parallel_writes": parallel_writes,
         "write_workers": write_workers,
         "index_workers": index_workers,
-        "process_pipeline": process_pipeline or process_write_queue,
+        "process_pipeline": process_pipeline or process_write_queue or task_kafka,
+        "task_kafka": task_kafka,
         "process_write_queue": process_write_queue,
         "write_queue_batches": write_queue_batches,
         "query_workers": query_workers,
