@@ -36,6 +36,8 @@ def opensearch_loader_prefect(
     index_workers: int = 1,
     process_pipeline: bool = False,
     query_workers: int = 4,
+    process_write_queue: bool = False,
+    write_queue_batches: int = 10,
 ):
     """Load selected indexes; process_pipeline shares query/write subprocess pools.
 
@@ -77,7 +79,9 @@ def opensearch_loader_prefect(
         "parallel_writes": parallel_writes,
         "write_workers": write_workers,
         "index_workers": index_workers,
-        "process_pipeline": process_pipeline,
+        "process_pipeline": process_pipeline or process_write_queue,
+        "process_write_queue": process_write_queue,
+        "write_queue_batches": write_queue_batches,
         "query_workers": query_workers,
         "about_file": about_file_path,
         "model_files": model_files,

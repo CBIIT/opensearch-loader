@@ -117,7 +117,7 @@ class Loader:
         return normalized[:max_length] + '...'
     
     def load(self):
-        if self.config.get('process_pipeline', False):
+        if self.config.get('process_pipeline', False) or self.config.get('process_write_queue', False):
             from .process_pipeline import load_with_processes
             return load_with_processes(self)
         return self._load()
@@ -331,8 +331,13 @@ class Loader:
             try:
                 return self._process_index_serial(index_config)
             finally:
-                self.opensearch = original
-                self.partition_mode = previous
+                try:
+                    drain = getattr(type(self._shared_writer), 'drain', None)
+                    if drain is not None:
+                        drain(self._shared_writer, index_name)
+                finally:
+                    self.opensearch = original
+                    self.partition_mode = previous
         if self.config.get('parallel_writes', False):
             from .partitioned import load_partitioned
             return load_partitioned(self, index_config)

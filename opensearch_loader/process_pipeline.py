@@ -194,13 +194,118 @@ class ProcessWrites:
     shutdown = close
 
 
+
+class QueuedProcessWrites(ProcessWrites):
+    """Bounded outstanding batches, delivered to ordered subprocess lanes over IPC.
+
+    The semaphore bounds queued AND executing batches across all indexes. Threads
+    only drive socket RPC; OpenSearch calls run in the existing child processes.
+    Failures stay attached to their index so a loader retry cannot hide a failure.
+    """
+    def __init__(self, delegate, config, workers=4, timeout=3600, queue_batches=10):
+        self.capacity = positive_workers(queue_batches)
+        self.slots = threading.BoundedSemaphore(self.capacity)
+        self.condition = threading.Condition()
+        self.pending = {}
+        self.errors = {}
+        super().__init__(delegate, config, workers, timeout)
+
+    def _check(self, index):
+        if index in self.errors:
+            raise RuntimeError('Queued process write failed for ' + index) from self.errors[index]
+
+    def _execute(self, lane, method, index, args, kwargs):
+        with self.condition:
+            self._check(index)
+        started = time.monotonic()
+        result = self.children[lane].call(method, index, *args, **kwargs)
+        logger.info('%s: Queue batch ACK: lane=%s method=%s wall=%.3fs',
+                    index, lane, method, time.monotonic() - started)
+        return result
+
+    def _submit(self, lane, method, index, args, kwargs):
+        self.slots.acquire()  # Backpressure: querying pauses only when queue is full.
+        try:
+            with self.condition:
+                self._check(index)
+                future = self.pools[lane].submit(self._execute, lane, method, index, args, kwargs)
+                self.pending[future] = index
+        except BaseException:
+            self.slots.release()
+            raise
+        def completed(done):
+            with self.condition:
+                error = done.exception()
+                if error is not None:
+                    self.errors.setdefault(index, error)
+                self.pending.pop(done, None)
+                self.slots.release()
+                self.condition.notify_all()
+        future.add_done_callback(completed)
+
+    def _write(self, method, index, documents, id_field, **kwargs):
+        # Bound each queued message by both count and serialized size. Each ID
+        # always takes the same serial lane, including across query boundaries.
+        partitions = [[] for _ in range(self.workers)]
+        sizes = [0] * self.workers
+        for doc in documents:
+            if not doc.get(id_field):
+                continue  # Same missing-ID behavior as synchronous ProcessWrites.
+            lane = partition_for_id(doc[id_field], self.workers)
+            encoded = pickle.dumps(doc)
+            if len(encoded) > 5 * 1024 * 1024:
+                raise ValueError('Document exceeds 5 MiB process queue limit')
+            if partitions[lane] and (len(partitions[lane]) >= 5000 or sizes[lane] + len(encoded) > 5 * 1024 * 1024):
+                self._submit(lane, method, index, (partitions[lane], id_field), kwargs)
+                partitions[lane] = []; sizes[lane] = 0
+            partitions[lane].append(pickle.loads(encoded))
+            sizes[lane] += len(encoded)
+        for lane, rows in enumerate(partitions):
+            if rows:
+                self._submit(lane, method, index, (rows, id_field), kwargs)
+        logger.info('%s:%s: Batches queued (not yet acknowledged): documents=%s capacity=%s',
+                    index, kwargs.get('query_name'), len(documents), self.capacity)
+
+    def upsert_pages(self, index, pages):
+        for doc_id, page in pages:
+            payload = pickle.dumps(page)
+            if len(payload) > 5 * 1024 * 1024:
+                raise ValueError('Document exceeds 5 MiB process queue limit')
+            self._submit(partition_for_id(doc_id, self.workers), 'upsert_document',
+                         index, (doc_id, pickle.loads(payload)), {})
+
+    def drain(self, index=None):
+        with self.condition:
+            while any(index is None or name == index for name in self.pending.values()):
+                self.condition.wait()
+            if index is not None:
+                self._check(index)
+            elif self.errors:
+                self._check(next(iter(self.errors)))
+
+    def refresh_index(self, index):
+        self.drain(index)
+        self.delegate.refresh_index(index)
+        logger.info('%s: Queue drained and index refreshed', index)
+
+    def close(self):
+        try:
+            self.drain()
+        finally:
+            super().close()
+
+    shutdown = close
+
+
 def load_with_processes(loader):
     """Own exactly one shared set of workers for the complete flow run."""
     old_memgraph = loader.memgraph
     with ExitStack() as stack:
         query_pool = QueryPool(loader.config.get_memgraph_config(), loader.config.get('query_workers', 4))
         stack.callback(query_pool.close)
-        writer = ProcessWrites(loader.opensearch, loader.config.get_opensearch_config(), loader.config.get('write_workers', 4))
+        writer_class = QueuedProcessWrites if loader.config.get('process_write_queue', False) else ProcessWrites
+        options = {'queue_batches': loader.config.get('write_queue_batches', 10)} if writer_class is QueuedProcessWrites else {}
+        writer = writer_class(loader.opensearch, loader.config.get_opensearch_config(), loader.config.get('write_workers', 4), **options)
         stack.callback(writer.close)
         loader._query_pool = query_pool
         loader._shared_writer = writer

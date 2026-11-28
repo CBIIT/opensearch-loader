@@ -69,6 +69,12 @@ deployments:
       about_file: "frontend/src/content/dev/aboutPagesContent.yaml"
       indices_file: "backend/src/main/resources/yaml/indices.yaml"
       selected_indices: []
+      process_pipeline: true
+      process_write_queue: true
+      write_queue_batches: 10
+      query_workers: 4
+      write_workers: 4
+      index_workers: 4
     work_pool:
       name: cds-general-mgconsole-prefect-3.4.18-python3.12
       work_queue_name: default
